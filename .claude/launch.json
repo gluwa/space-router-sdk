@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "proxy-gateway",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd proxy-gateway && python3 -m app.main"],
+      "port": 8081
+    },
+    {
+      "name": "coordination-api",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd coordination-api && python3 -m app.main"],
+      "port": 8000
+    }
+  ]
+}

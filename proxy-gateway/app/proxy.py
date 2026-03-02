@@ -1,9 +1,11 @@
 import asyncio
+import base64
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from app.auth import AuthValidator, extract_api_key
 from app.config import Settings
@@ -119,10 +121,28 @@ async def relay_streams(
     return bytes_a_to_b[0], bytes_b_to_a[0]
 
 
-async def _connect_to_node(endpoint_url: str, timeout: float) -> tuple[asyncio.StreamReader, asyncio.StreamWriter] | None:
+@dataclass
+class NodeConnection:
+    reader: asyncio.StreamReader
+    writer: asyncio.StreamWriter
+    proxy_auth: str | None  # Proxy-Authorization header value, if upstream proxy requires auth
+
+
+def _extract_proxy_auth(parsed_url) -> str | None:
+    """Extract Proxy-Authorization header from URL credentials (user:pass@host)."""
+    if parsed_url.username:
+        user = unquote(parsed_url.username)
+        passwd = unquote(parsed_url.password or "")
+        creds = base64.b64encode(f"{user}:{passwd}".encode()).decode()
+        return f"Basic {creds}"
+    return None
+
+
+async def _connect_to_node(endpoint_url: str, timeout: float) -> NodeConnection | None:
     parsed = urlparse(endpoint_url)
     host = parsed.hostname
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    proxy_auth = _extract_proxy_auth(parsed)
 
     try:
         if parsed.scheme == "https":
@@ -137,7 +157,7 @@ async def _connect_to_node(endpoint_url: str, timeout: float) -> tuple[asyncio.S
                 asyncio.open_connection(host, port),
                 timeout=timeout,
             )
-        return reader, writer
+        return NodeConnection(reader=reader, writer=writer, proxy_auth=proxy_auth)
     except (OSError, asyncio.TimeoutError) as e:
         logger.warning("Failed to connect to node %s: %s", endpoint_url, e)
         return None
@@ -156,13 +176,15 @@ async def handle_connect(
     if conn is None:
         return False, 0, 0, "connection_refused"
 
-    node_reader, node_writer = conn
+    node_reader, node_writer = conn.reader, conn.writer
 
     try:
-        # Send CONNECT to home node
+        # Send CONNECT to home node (or upstream proxy)
+        auth_header = f"Proxy-Authorization: {conn.proxy_auth}\r\n" if conn.proxy_auth else ""
         connect_req = (
             f"CONNECT {target_host}:{target_port} HTTP/1.1\r\n"
             f"Host: {target_host}:{target_port}\r\n"
+            f"{auth_header}"
             f"X-SpaceRouter-Request-Id: {request_id}\r\n"
             f"\r\n"
         ).encode()
@@ -232,16 +254,19 @@ async def handle_http_forward(
     if conn is None:
         return False, 0, 0, None, "connection_refused"
 
-    node_reader, node_writer = conn
+    node_reader, node_writer = conn.reader, conn.writer
 
     try:
-        # Build request to forward to home node
-        # Remove proxy-specific headers, keep the rest
+        # Build request to forward to home node (or upstream proxy)
+        # Remove client's proxy-specific headers, keep the rest
         forward_headers = {
             k: v for k, v in headers.items()
             if k.lower() not in ("proxy-authorization", "proxy-connection")
         }
         forward_headers["X-SpaceRouter-Request-Id"] = request_id
+        # Add upstream proxy auth if the node endpoint has credentials
+        if conn.proxy_auth:
+            forward_headers["Proxy-Authorization"] = conn.proxy_auth
 
         header_str = "".join(f"{k}: {v}\r\n" for k, v in forward_headers.items())
         request_head = f"{method} {target} {version}\r\n{header_str}\r\n".encode()
