@@ -1,12 +1,13 @@
 """Home Node Daemon — entry point.
 
 Lifecycle:
-  1. Detect public IP (or use configured value)
-  2. Register with Coordination API
-  3. Start asyncio TCP server
-  4. Wait for SIGTERM / SIGINT
-  5. Deregister node (best-effort)
-  6. Shutdown
+  1. Detect Tailscale IP (if enabled)
+  2. Detect public IP (or use configured value)
+  3. Register with Coordination API
+  4. Start asyncio TCP server
+  5. Wait for SIGTERM / SIGINT
+  6. Deregister node (best-effort)
+  7. Shutdown
 """
 
 import asyncio
@@ -37,7 +38,24 @@ async def _run(settings_override=None) -> None:  # noqa: ANN001
         loop.add_signal_handler(sig, stop_event.set)
 
     async with httpx.AsyncClient() as http_client:
-        # 1. Detect public IP
+        # 1. Detect Tailscale IP (if enabled)
+        tailscale_ip = None
+        if s.TAILSCALE_ENABLED:
+            from app.tailscale import detect_tailscale_ip, ensure_tailscale_up
+
+            if s.TAILSCALE_AUTH_KEY:
+                await ensure_tailscale_up(s.TAILSCALE_AUTH_KEY)
+
+            tailscale_ip = await detect_tailscale_ip()
+            if tailscale_ip:
+                logger.info("Tailscale IP: %s", tailscale_ip)
+            else:
+                logger.warning(
+                    "Tailscale enabled but no IP detected — "
+                    "falling back to direct public IP mode"
+                )
+
+        # 2. Detect public IP (always needed for metadata)
         if s.PUBLIC_IP:
             public_ip = s.PUBLIC_IP
             logger.info("Using configured public IP: %s", public_ip)
@@ -48,28 +66,33 @@ async def _run(settings_override=None) -> None:  # noqa: ANN001
                 logger.error("Cannot detect public IP — aborting")
                 sys.exit(1)
 
-        # 2. Register with Coordination API
+        # 3. Register with Coordination API
         try:
-            node_id = await register_node(http_client, s, public_ip)
+            node_id = await register_node(
+                http_client, s, public_ip, tailscale_ip=tailscale_ip,
+            )
         except Exception:
             logger.exception("Failed to register with Coordination API — aborting")
             sys.exit(1)
 
-        # 3. Start TCP server
+        # 4. Start TCP server
         handler = functools.partial(handle_client, settings=s)
         server = await asyncio.start_server(handler, host="0.0.0.0", port=s.NODE_PORT)
-        logger.info("Home Node listening on port %d (node_id=%s)", s.NODE_PORT, node_id)
+        logger.info(
+            "Home Node listening on port %d (node_id=%s, tailscale=%s)",
+            s.NODE_PORT, node_id, tailscale_ip or "disabled",
+        )
 
         try:
             await stop_event.wait()
         finally:
             logger.info("Shutting down…")
 
-            # 4. Stop accepting new connections
+            # 5. Stop accepting new connections
             server.close()
             await server.wait_closed()
 
-            # 5. Deregister (best-effort)
+            # 6. Deregister (best-effort)
             await deregister_node(http_client, s, node_id)
 
     logger.info("Home Node shut down cleanly")

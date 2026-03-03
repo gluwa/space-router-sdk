@@ -21,6 +21,8 @@ CREATE INDEX idx_api_keys_key_hash ON api_keys (key_hash) WHERE is_active = TRUE
 CREATE TABLE nodes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     endpoint_url TEXT NOT NULL,
+    public_ip TEXT,
+    connectivity_type TEXT NOT NULL DEFAULT 'direct',
     node_type TEXT NOT NULL DEFAULT 'residential',
     status TEXT NOT NULL DEFAULT 'online',
     health_score FLOAT NOT NULL DEFAULT 1.0,

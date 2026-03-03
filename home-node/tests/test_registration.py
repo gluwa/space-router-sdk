@@ -121,9 +121,44 @@ class TestRegisterNode:
         import json
         body = json.loads(req.content)
         assert body["endpoint_url"] == "http://1.2.3.4:9090"
+        assert body["public_ip"] == "1.2.3.4"
+        assert body["connectivity_type"] == "direct"
         assert body["node_type"] == "residential"
         assert body["region"] == "us-west"
         assert body["label"] == "test-node"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_register_with_tailscale_ip(self, reg_settings):
+        respx.post("http://coordination:8000/nodes").mock(
+            return_value=Response(201, json={
+                "id": "node-ts-456",
+                "endpoint_url": "http://100.64.1.5:9090",
+                "public_ip": "1.2.3.4",
+                "connectivity_type": "tailscale",
+                "node_type": "residential",
+                "status": "online",
+                "health_score": 1.0,
+                "region": "us-west",
+                "label": "test-node",
+                "created_at": "2026-01-01T00:00:00Z",
+            })
+        )
+
+        import httpx
+        async with httpx.AsyncClient() as client:
+            node_id = await register_node(
+                client, reg_settings, "1.2.3.4", tailscale_ip="100.64.1.5",
+            )
+
+        assert node_id == "node-ts-456"
+
+        req = respx.calls[0].request
+        import json
+        body = json.loads(req.content)
+        assert body["endpoint_url"] == "http://100.64.1.5:9090"
+        assert body["public_ip"] == "1.2.3.4"
+        assert body["connectivity_type"] == "tailscale"
 
     @pytest.mark.asyncio
     @respx.mock

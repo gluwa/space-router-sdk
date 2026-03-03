@@ -16,11 +16,15 @@ class RegisterNodeRequest(BaseModel):
     node_type: str = "residential"  # "residential" or "external_provider"
     region: str | None = None
     label: str | None = None
+    public_ip: str | None = None
+    connectivity_type: str = "direct"  # "tailscale" | "direct" | "external_provider"
 
 
 class NodeInfo(BaseModel):
     id: str
     endpoint_url: str
+    public_ip: str | None = None
+    connectivity_type: str = "direct"
     node_type: str
     status: str
     health_score: float
@@ -37,6 +41,8 @@ async def register_node(body: RegisterNodeRequest, request: Request) -> NodeInfo
             "nodes",
             {
                 "endpoint_url": body.endpoint_url,
+                "public_ip": body.public_ip,
+                "connectivity_type": body.connectivity_type,
                 "node_type": body.node_type,
                 "status": "online",
                 "health_score": 1.0,

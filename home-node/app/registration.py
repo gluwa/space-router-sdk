@@ -49,15 +49,29 @@ async def register_node(
     http_client: httpx.AsyncClient,
     settings: Settings,
     public_ip: str,
+    *,
+    tailscale_ip: str | None = None,
 ) -> str:
     """Register this node with the Coordination API.
+
+    If *tailscale_ip* is provided, the ``endpoint_url`` uses the Tailscale
+    address (reachable through the tailnet) and the residential *public_ip*
+    is sent as metadata.  Otherwise falls back to the public IP for both.
 
     Returns the ``node_id`` assigned by the API.
     Raises on failure — the caller should abort startup.
     """
-    endpoint_url = f"http://{public_ip}:{settings.NODE_PORT}"
+    if tailscale_ip:
+        endpoint_url = f"http://{tailscale_ip}:{settings.NODE_PORT}"
+        connectivity_type = "tailscale"
+    else:
+        endpoint_url = f"http://{public_ip}:{settings.NODE_PORT}"
+        connectivity_type = "direct"
+
     payload = {
         "endpoint_url": endpoint_url,
+        "public_ip": public_ip,
+        "connectivity_type": connectivity_type,
         "node_type": settings.NODE_TYPE,
     }
     if settings.NODE_REGION:
@@ -66,7 +80,10 @@ async def register_node(
         payload["label"] = settings.NODE_LABEL
 
     url = f"{settings.COORDINATION_API_URL}/nodes"
-    logger.info("Registering node at %s → %s", url, endpoint_url)
+    logger.info(
+        "Registering node at %s → endpoint=%s public_ip=%s connectivity=%s",
+        url, endpoint_url, public_ip, connectivity_type,
+    )
 
     resp = await http_client.post(url, json=payload, timeout=15.0)
     resp.raise_for_status()

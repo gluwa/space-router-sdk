@@ -18,18 +18,21 @@ Space Router provides a single proxy URL that routes agent HTTP traffic through 
   (HTTP proxy)       │  :8080 (proxy)   │
                      │  :8081 (mgmt)    │
                      └────────┬─────────┘
-                              │
+                              │  Tailscale (WireGuard)
                      ┌────────▼─────────┐
                      │ Coordination API │
                      │  :8000           │
                      │  (Database)      │
                      └────────┬─────────┘
-                              │
+                              │  Tailscale (WireGuard)
                  ┌────────────┼────────────┐
                  ▼            ▼            ▼
            Home Node    Home Node    proxyjet.io
            :9090        :9090        (fallback)
+       (residential)  (residential)
 ```
+
+Home Nodes run on residential machines behind NAT. [Tailscale](https://tailscale.com/) provides a WireGuard mesh VPN so the Proxy Gateway can reach them without port forwarding.
 
 ## Database Options
 
@@ -93,6 +96,9 @@ export SR_COORDINATION_API_URL=http://localhost:8000
 
 # For local dev, set PUBLIC_IP so it doesn't try external IP detection
 export SR_PUBLIC_IP=127.0.0.1
+
+# Tailscale: disabled for local dev (no NAT to traverse)
+export SR_TAILSCALE_ENABLED=false
 
 # Optional: set node metadata
 export SR_NODE_LABEL=my-macbook
@@ -170,6 +176,33 @@ Or with curl:
 curl -x http://sr_live_YOUR_API_KEY@localhost:8080 https://example.com
 ```
 
+## Tailscale Setup
+
+Home Nodes run on residential machines behind NAT routers. Tailscale creates a WireGuard mesh VPN so the Proxy Gateway can reach Home Nodes without port forwarding.
+
+### 1. Create a Tailscale account
+
+Sign up at [tailscale.com](https://tailscale.com/) and create a tailnet.
+
+### 2. Configure ACLs
+
+Apply `tailscale/acl.json` to your tailnet via the [Tailscale admin console](https://login.tailscale.com/admin/acls). This restricts traffic so only the Proxy Gateway can reach Home Nodes.
+
+### 3. Generate auth keys
+
+In the Tailscale admin console, create reusable + ephemeral auth keys for each component:
+
+- `tag:spacerouter-gateway` — for the Proxy Gateway
+- `tag:spacerouter-node` — for Home Nodes
+
+### 4. Set auth keys
+
+For each component, set `SR_TAILSCALE_AUTH_KEY` to the appropriate auth key. The Home Node will auto-detect its Tailscale IP and register it as the endpoint URL.
+
+### Dual-mode support
+
+Tailscale is the default connectivity mode. Home Nodes that have port forwarding configured can set `SR_TAILSCALE_ENABLED=false` to register their public IP directly.
+
 ## Production Deployment
 
 ### Coordination API (Fly.io)
@@ -208,7 +241,8 @@ cd proxy-gateway
 
 fly secrets set \
   SR_COORDINATION_API_URL=https://coordination.spacerouter.io \
-  SR_COORDINATION_API_SECRET=your-strong-secret
+  SR_COORDINATION_API_SECRET=your-strong-secret \
+  SR_TAILSCALE_AUTH_KEY=tskey-auth-xxxxx
 
 fly deploy
 ```
@@ -224,6 +258,7 @@ cd home-node
 pip install -r requirements.txt
 
 export SR_COORDINATION_API_URL=https://coordination.spacerouter.io
+export SR_TAILSCALE_AUTH_KEY=tskey-auth-xxxxx  # Auto-joins the tailnet
 export SR_NODE_LABEL=macbook-home
 export SR_NODE_REGION=us-west
 
@@ -329,6 +364,8 @@ All settings are via environment variables with the `SR_` prefix.
 | `SR_BUFFER_SIZE` | 65536 | TCP read buffer size |
 | `SR_REQUEST_TIMEOUT` | 30.0 | Timeout (seconds) for connecting to target servers |
 | `SR_RELAY_TIMEOUT` | 300.0 | Max duration (seconds) for a CONNECT tunnel relay |
+| `SR_TAILSCALE_ENABLED` | true | Enable Tailscale for NAT traversal |
+| `SR_TAILSCALE_AUTH_KEY` | — | Tailscale auth key for auto-join (reusable + ephemeral recommended) |
 
 ## API Reference
 
@@ -398,4 +435,4 @@ The Home Node accepts raw TCP connections from the Proxy Gateway. It supports:
 
 The Home Node strips `X-SpaceRouter-*` and `Proxy-Authorization` headers before forwarding to target servers.
 
-On startup it auto-registers with the Coordination API (`POST /nodes`) and sets status to `offline` on graceful shutdown.
+On startup it detects its Tailscale IP (if enabled), auto-registers with the Coordination API (`POST /nodes`), and sets status to `offline` on graceful shutdown. When Tailscale is active, the registered endpoint uses the Tailscale IP for NAT traversal while the residential public IP is preserved as metadata.

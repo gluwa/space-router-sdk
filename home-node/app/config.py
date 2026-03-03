@@ -13,6 +13,9 @@ class Settings(BaseSettings):
 
     PUBLIC_IP: str = ""  # Auto-detected if empty
 
+    TAILSCALE_ENABLED: bool = True
+    TAILSCALE_AUTH_KEY: str = ""  # Reusable auth key for auto-join
+
     BUFFER_SIZE: int = 65536
     REQUEST_TIMEOUT: float = 30.0
     RELAY_TIMEOUT: float = 300.0
