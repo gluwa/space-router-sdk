@@ -22,3 +22,8 @@ primary_region = "iad"
   method = "GET"
   path = "/healthz"
   timeout = "5s"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

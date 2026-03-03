@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
 from app.config import get_settings
+from app.db import SupabaseClient
 from app.routers import api_keys, nodes, internal
 from app.services.auth_service import AuthService
 from app.services.routing_service import RoutingService
@@ -44,10 +45,9 @@ async def startup_db_client():
         app.state.db = SQLiteClient(settings.SQLITE_DB_PATH)
         logger.info(f"Using SQLite database at {settings.SQLITE_DB_PATH}")
     else:
-        # This would be the Supabase client in the original code
-        # We're not including it since we're using SQLite only
-        logger.info("Supabase client not configured - using SQLite instead")
-        app.state.db = SQLiteClient(settings.SQLITE_DB_PATH)
+        # Use Supabase (PostgREST) for production
+        app.state.db = SupabaseClient(http_client, settings)
+        logger.info("Using Supabase database")
     
     # Initialize services
     app.state.auth_service = AuthService(http_client, settings)
