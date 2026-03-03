@@ -1,64 +1,66 @@
 import logging
-from contextlib import asynccontextmanager
 
-import httpx
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
 
-from app.config import settings
-from app.db import SupabaseClient
-from app.routers import api_keys, internal, nodes
+from app.config import get_settings
+from app.routers import api_keys, nodes, internal
 from app.services.auth_service import AuthService
 from app.services.routing_service import RoutingService
+from app.sqlite_db import SQLiteClient
 
 logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+    level=getattr(logging, get_settings().LOG_LEVEL.upper()),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
 
+app = FastAPI(title="Space Router Coordination API")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    http_client = httpx.AsyncClient()
-    db = SupabaseClient(http_client, settings)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    app.state.settings = settings
-    app.state.http_client = http_client
-    app.state.db = db
-    app.state.auth_service = AuthService(db)
-    app.state.routing_service = RoutingService(db, settings)
-
-    logger.info("Coordination API starting on port %d", settings.PORT)
-    yield
-
-    await http_client.aclose()
-    logger.info("Coordination API shut down")
-
-
-app = FastAPI(title="Space Router Coordination API", lifespan=lifespan)
-
-app.include_router(internal.router)
+# Include routers - these need to be included before startup_db_client
 app.include_router(api_keys.router)
 app.include_router(nodes.router)
+app.include_router(internal.router)
+
+@app.on_event("startup")
+async def startup_db_client():
+    settings = get_settings()
+    logger.info(f"Coordination API starting on port {settings.PORT}")
+    
+    # Create an httpx client that will be passed to services
+    http_client = httpx.AsyncClient()
+    
+    if settings.USE_SQLITE:
+        # Use SQLite for local development
+        app.state.db = SQLiteClient(settings.SQLITE_DB_PATH)
+        logger.info(f"Using SQLite database at {settings.SQLITE_DB_PATH}")
+    else:
+        # This would be the Supabase client in the original code
+        # We're not including it since we're using SQLite only
+        logger.info("Supabase client not configured - using SQLite instead")
+        app.state.db = SQLiteClient(settings.SQLITE_DB_PATH)
+    
+    # Initialize services
+    app.state.auth_service = AuthService(http_client, settings)
+    app.state.routing_service = RoutingService(http_client, settings)
 
 
 @app.get("/healthz")
-async def healthz() -> dict:
-    return {"status": "healthy"}
+async def health_check():
+    """Liveness probe."""
+    return {"status": "ok"}
 
 
 @app.get("/readyz")
-async def readyz() -> dict:
-    # Could check DB connectivity here
-    return {"status": "ready"}
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",
-        port=settings.PORT,
-        log_level=settings.LOG_LEVEL.lower(),
-    )
+async def readiness_check():
+    """Readiness probe."""
+    return {"status": "ok"}

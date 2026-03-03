@@ -2,6 +2,12 @@ import json
 from datetime import datetime, timezone
 
 
+class AuthenticationError(Exception):
+    """Raised when authentication fails."""
+
+    pass
+
+
 def build_http_response(
     status_code: int,
     status_text: str,

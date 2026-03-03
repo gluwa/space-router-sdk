@@ -12,7 +12,8 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api-keys", tags=["api-keys"])
+# Remove the prefix to fix the 404 issue
+router = APIRouter(tags=["api-keys"])
 
 
 def _generate_api_key() -> str:
@@ -36,7 +37,7 @@ class CreateApiKeyResponse(BaseModel):
     rate_limit_rpm: int
 
 
-@router.post("", status_code=201)
+@router.post("/api-keys", status_code=201)
 async def create_api_key(body: CreateApiKeyRequest, request: Request) -> CreateApiKeyResponse:
     db = request.app.state.db
     api_key = _generate_api_key()
@@ -54,8 +55,11 @@ async def create_api_key(body: CreateApiKeyRequest, request: Request) -> CreateA
             },
             return_rows=True,
         )
-    except Exception:
-        logger.exception("Failed to create API key")
+        if not rows:
+            raise Exception("No rows returned after insert")
+            
+    except Exception as e:
+        logger.exception("Failed to create API key: %s", e)
         raise HTTPException(status_code=500, detail="Failed to create API key")
 
     row = rows[0]
@@ -76,32 +80,26 @@ class ApiKeyInfo(BaseModel):
     created_at: str
 
 
-@router.get("")
+@router.get("/api-keys")
 async def list_api_keys(request: Request) -> list[ApiKeyInfo]:
     db = request.app.state.db
     try:
-        rows = await db.select(
-            "api_keys",
-            params={
-                "select": "id,name,key_prefix,rate_limit_rpm,is_active,created_at",
-                "order": "created_at.desc",
-            },
-        )
-    except Exception:
-        logger.exception("Failed to list API keys")
+        rows = await db.select("api_keys")
+        return [ApiKeyInfo(**r) for r in rows]
+    except Exception as e:
+        logger.exception("Failed to list API keys: %s", e)
         raise HTTPException(status_code=500, detail="Failed to list API keys")
-    return [ApiKeyInfo(**r) for r in rows]
 
 
-@router.delete("/{key_id}", status_code=204)
+@router.delete("/api-keys/{key_id}", status_code=204)
 async def revoke_api_key(key_id: str, request: Request) -> None:
     db = request.app.state.db
     try:
         await db.update(
             "api_keys",
             {"is_active": False},
-            params={"id": f"eq.{key_id}"},
+            params={"id": key_id},
         )
-    except Exception:
-        logger.exception("Failed to revoke API key %s", key_id)
+    except Exception as e:
+        logger.exception("Failed to revoke API key %s: %s", key_id, e)
         raise HTTPException(status_code=500, detail="Failed to revoke API key")

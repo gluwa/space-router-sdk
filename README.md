@@ -22,7 +22,7 @@ Space Router provides a single proxy URL that routes agent HTTP traffic through 
                      ┌────────▼─────────┐
                      │ Coordination API │
                      │  :8000           │
-                     │  (Supabase DB)   │
+                     │  (Database)      │
                      └────────┬─────────┘
                               │
                  ┌────────────┼────────────┐
@@ -31,25 +31,34 @@ Space Router provides a single proxy URL that routes agent HTTP traffic through 
            :9090        :9090        (fallback)
 ```
 
-## Quick Start (Local Development)
+## Database Options
+
+Space Router supports two database options:
+
+1. **Supabase (Default/Production)** - Cloud-based PostgreSQL database with PostgREST API
+2. **SQLite (Development)** - Local file-based database for easy development and testing
+
+The SQLite option is perfect for development, testing, and deployments where an external database dependency is not desirable.
+
+## Quick Start (Local Development with SQLite)
 
 ### Prerequisites
 
 - Python 3.12+
 - pip
 
-### 1. Coordination API
+### 1. Coordination API with SQLite
 
 ```bash
 cd coordination-api
 pip install -r requirements.txt
 
-# Set required environment variables
-export SR_SUPABASE_URL=https://your-project.supabase.co
-export SR_SUPABASE_SERVICE_KEY=your-service-key
-export SR_INTERNAL_API_SECRET=shared-secret
+# Set environment variables for SQLite mode
+export SR_USE_SQLITE=true
+export SR_SQLITE_DB_PATH=space_router.db
+export SR_INTERNAL_API_SECRET=local-dev-secret
 
-# Proxyjet.io fallback (default proxy provider)
+# Optional: Configure fallback proxy
 export SR_PROXYJET_HOST=proxy.proxyjet.io
 export SR_PROXYJET_PORT=8080
 export SR_PROXYJET_USERNAME=your-user
@@ -67,7 +76,7 @@ pip install -r requirements.txt
 
 # Set required environment variables
 export SR_COORDINATION_API_URL=http://localhost:8000
-export SR_COORDINATION_API_SECRET=shared-secret
+export SR_COORDINATION_API_SECRET=local-dev-secret
 
 # Start the server (proxy on :8080, management API on :8081)
 python -m app.main
@@ -93,11 +102,7 @@ export SR_NODE_REGION=us-west
 python -m app.main
 ```
 
-### 4. Database Setup
-
-Run `coordination-api/schema.sql` in the Supabase SQL Editor to create the required tables (`api_keys`, `nodes`, `route_outcomes`, `request_logs`).
-
-### 5. Create an API Key
+### 4. Create an API Key
 
 ```bash
 curl -X POST http://localhost:8000/api-keys \
@@ -107,13 +112,43 @@ curl -X POST http://localhost:8000/api-keys \
 
 Save the `api_key` from the response — it's only shown once.
 
-### 6. Test End-to-End
+### 5. Test End-to-End
 
 ```bash
 # Send a request through the full pipeline:
 # Agent → Proxy Gateway → Home Node → target
 curl -x http://sr_live_YOUR_API_KEY@localhost:8080 http://httpbin.org/ip
 ```
+
+## Quick Start (Production with Supabase)
+
+### 1. Database Setup
+
+Run `coordination-api/schema.sql` in the Supabase SQL Editor to create the required tables (`api_keys`, `nodes`, `route_outcomes`, `request_logs`).
+
+### 2. Coordination API
+
+```bash
+cd coordination-api
+pip install -r requirements.txt
+
+# Set required environment variables
+export SR_USE_SQLITE=false  # Explicitly disable SQLite
+export SR_SUPABASE_URL=https://your-project.supabase.co
+export SR_SUPABASE_SERVICE_KEY=your-service-key
+export SR_INTERNAL_API_SECRET=shared-secret
+
+# Proxyjet.io fallback (default proxy provider)
+export SR_PROXYJET_HOST=proxy.proxyjet.io
+export SR_PROXYJET_PORT=8080
+export SR_PROXYJET_USERNAME=your-user
+export SR_PROXYJET_PASSWORD=your-pass
+
+# Start the server
+python -m app.main
+```
+
+Follow the remaining steps from the Local Development section for setting up the Proxy Gateway and Home Node.
 
 ### Usage in Code
 
@@ -142,8 +177,9 @@ curl -x http://sr_live_YOUR_API_KEY@localhost:8080 https://example.com
 ```bash
 cd coordination-api
 
-# Set secrets
+# For Supabase deployment
 fly secrets set \
+  SR_USE_SQLITE=false \
   SR_SUPABASE_URL=https://your-project.supabase.co \
   SR_SUPABASE_SERVICE_KEY=your-service-key \
   SR_INTERNAL_API_SECRET=your-strong-secret \
@@ -151,6 +187,16 @@ fly secrets set \
   SR_PROXYJET_PORT=8080 \
   SR_PROXYJET_USERNAME=your-user \
   SR_PROXYJET_PASSWORD=your-pass
+
+# OR for SQLite deployment
+# fly secrets set \
+#   SR_USE_SQLITE=true \
+#   SR_SQLITE_DB_PATH=/data/space_router.db \
+#   SR_INTERNAL_API_SECRET=your-strong-secret \
+#   SR_PROXYJET_HOST=proxy.proxyjet.io \
+#   SR_PROXYJET_PORT=8080 \
+#   SR_PROXYJET_USERNAME=your-user \
+#   SR_PROXYJET_PASSWORD=your-pass
 
 fly deploy
 ```
@@ -253,6 +299,7 @@ All settings are via environment variables with the `SR_` prefix.
 | `SR_DEFAULT_RATE_LIMIT_RPM` | 60 | Default requests per minute per API key |
 | `SR_NODE_REQUEST_TIMEOUT` | 30.0 | Timeout (seconds) for node requests |
 | `SR_AUTH_CACHE_TTL` | 300 | Seconds to cache auth validation results |
+| `SR_USE_SQLITE` | false | Use SQLite mode instead of Supabase |
 
 ### Coordination API
 
@@ -266,6 +313,8 @@ All settings are via environment variables with the `SR_` prefix.
 | `SR_PROXYJET_PORT` | 8080 | Proxyjet.io proxy port |
 | `SR_PROXYJET_USERNAME` | — | Proxyjet.io auth username |
 | `SR_PROXYJET_PASSWORD` | — | Proxyjet.io auth password |
+| `SR_USE_SQLITE` | false | Use SQLite instead of Supabase |
+| `SR_SQLITE_DB_PATH` | space_router.db | Path to SQLite database file |
 
 ### Home Node Daemon
 

@@ -7,7 +7,8 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/nodes", tags=["nodes"])
+# Remove the prefix to fix the 404 issue
+router = APIRouter(tags=["nodes"])
 
 
 class RegisterNodeRequest(BaseModel):
@@ -28,7 +29,7 @@ class NodeInfo(BaseModel):
     created_at: str
 
 
-@router.post("", status_code=201)
+@router.post("/nodes", status_code=201)
 async def register_node(body: RegisterNodeRequest, request: Request) -> NodeInfo:
     db = request.app.state.db
     try:
@@ -44,30 +45,26 @@ async def register_node(body: RegisterNodeRequest, request: Request) -> NodeInfo
             },
             return_rows=True,
         )
-    except Exception:
-        logger.exception("Failed to register node")
+        if not rows:
+            raise Exception("No rows returned after insert")
+    except Exception as e:
+        logger.exception("Failed to register node: %s", e)
         raise HTTPException(status_code=500, detail="Failed to register node")
     return NodeInfo(**rows[0])
 
 
-@router.get("")
+@router.get("/nodes")
 async def list_nodes(request: Request) -> list[NodeInfo]:
     db = request.app.state.db
     try:
-        rows = await db.select(
-            "nodes",
-            params={
-                "select": "id,endpoint_url,node_type,status,health_score,region,label,created_at",
-                "order": "created_at.desc",
-            },
-        )
-    except Exception:
-        logger.exception("Failed to list nodes")
+        rows = await db.select("nodes")
+        return [NodeInfo(**r) for r in rows]
+    except Exception as e:
+        logger.exception("Failed to list nodes: %s", e)
         raise HTTPException(status_code=500, detail="Failed to list nodes")
-    return [NodeInfo(**r) for r in rows]
 
 
-@router.patch("/{node_id}/status")
+@router.patch("/nodes/{node_id}/status")
 async def update_node_status(node_id: str, request: Request) -> dict:
     body = await request.json()
     status = body.get("status")
@@ -75,18 +72,18 @@ async def update_node_status(node_id: str, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="Invalid status")
     db = request.app.state.db
     try:
-        await db.update("nodes", {"status": status}, params={"id": f"eq.{node_id}"})
-    except Exception:
-        logger.exception("Failed to update node status")
+        await db.update("nodes", {"status": status}, params={"id": node_id})
+    except Exception as e:
+        logger.exception("Failed to update node status: %s", e)
         raise HTTPException(status_code=500, detail="Failed to update node status")
     return {"ok": True}
 
 
-@router.delete("/{node_id}", status_code=204)
+@router.delete("/nodes/{node_id}", status_code=204)
 async def delete_node(node_id: str, request: Request) -> None:
     db = request.app.state.db
     try:
-        await db.delete("nodes", params={"id": f"eq.{node_id}"})
-    except Exception:
-        logger.exception("Failed to delete node %s", node_id)
+        await db.delete("nodes", params={"id": node_id})
+    except Exception as e:
+        logger.exception("Failed to delete node %s: %s", node_id, e)
         raise HTTPException(status_code=500, detail="Failed to delete node")

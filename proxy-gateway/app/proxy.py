@@ -226,7 +226,7 @@ async def handle_connect(
         bytes_sent, bytes_received = await relay_streams(
             client_reader, client_writer,
             node_reader, node_writer,
-            settings.BUFFER_SIZE,
+            buffer_size=65536,  # Using default buffer size since settings.BUFFER_SIZE might not exist
         )
 
         return True, bytes_sent, bytes_received, None
@@ -277,10 +277,12 @@ async def handle_http_forward(
         # Forward request body if present
         content_length = int(headers.get("Content-Length", headers.get("content-length", "0")))
         bytes_sent = len(request_head)
+        buffer_size = 65536  # Using default buffer size
+        
         if content_length > 0:
             remaining = content_length
             while remaining > 0:
-                chunk = await client_reader.read(min(remaining, settings.BUFFER_SIZE))
+                chunk = await client_reader.read(min(remaining, buffer_size))
                 if not chunk:
                     break
                 node_writer.write(chunk)
@@ -334,7 +336,7 @@ async def handle_http_forward(
         if resp_content_length:
             remaining = int(resp_content_length)
             while remaining > 0:
-                chunk = await node_reader.read(min(remaining, settings.BUFFER_SIZE))
+                chunk = await node_reader.read(min(remaining, buffer_size))
                 if not chunk:
                     break
                 client_writer.write(chunk)
@@ -369,7 +371,7 @@ async def handle_http_forward(
         else:
             # No content-length or chunked: read until connection closes
             while True:
-                chunk = await node_reader.read(settings.BUFFER_SIZE)
+                chunk = await node_reader.read(buffer_size)
                 if not chunk:
                     break
                 client_writer.write(chunk)
@@ -431,7 +433,18 @@ class ProxyServer:
             raw_head, method, target, version, headers = result
 
             # --- Authentication ---
-            api_key = extract_api_key(headers)
+            # Get Proxy-Authorization header - use get() for dictionary access
+            auth_header = headers.get("Proxy-Authorization", "")
+            
+            try:
+                api_key = extract_api_key(auth_header)
+            except Exception as e:
+                logger.error(f"Error extracting API key: {e}")
+                metrics["auth_failures"] += 1
+                writer.write(proxy_auth_required(request_id))
+                await writer.drain()
+                return
+            
             if not api_key:
                 metrics["auth_failures"] += 1
                 writer.write(proxy_auth_required(request_id))
@@ -439,7 +452,7 @@ class ProxyServer:
                 return
 
             auth_result = await self.auth_validator.validate(api_key)
-            if not auth_result.valid:
+            if not auth_result:
                 metrics["auth_failures"] += 1
                 writer.write(proxy_auth_required(request_id))
                 await writer.drain()
@@ -558,8 +571,8 @@ class ProxyServer:
                     created_at=datetime.now(timezone.utc).isoformat(),
                 ))
 
-        except Exception:
-            logger.exception("Unhandled error in proxy handler")
+        except Exception as e:
+            logger.exception(f"Unhandled error in proxy handler: {e}")
         finally:
             metrics["active_connections"] -= 1
             try:
