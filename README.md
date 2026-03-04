@@ -43,6 +43,43 @@ Space Router supports two database options:
 
 The SQLite option is perfect for development, testing, and deployments where an external database dependency is not desirable.
 
+## E2E Demo (Automated)
+
+The fastest way to see Space Router in action. A single script starts all 3 components, creates an API key, routes real HTTP and HTTPS traffic through the full proxy chain, and verifies every component.
+
+```bash
+bash scripts/e2e-demo.sh
+```
+
+The script will:
+
+1. Create virtual environments and install dependencies for each component
+2. Start the Coordination API, Home Node, and Proxy Gateway
+3. Create an API key and register the Home Node
+4. Run 6 test categories (8 assertions) covering HTTP proxying, HTTPS CONNECT tunneling, health checks, metrics, node registration, and API key management
+5. Print a summary with pass/fail results
+6. Clean up all processes on exit
+
+Expected output on success:
+
+```
+═══ Test Summary ═══
+
+  Total:  8
+  Passed: 8
+  Failed: 0
+
+  *** ALL TESTS PASSED ***
+
+  Architecture verified:
+    Agent -> Proxy Gateway (:8080)
+         -> Coordination API (:8000) [auth + routing]
+         -> Home Node (:9090) [TLS proxy]
+         -> Target (httpbin.org)
+```
+
+Prerequisites: Python 3.12+, pip, curl, nc (netcat).
+
 ## Quick Start (Local Development with SQLite)
 
 ### Prerequisites

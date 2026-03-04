@@ -25,12 +25,26 @@ class TestProxyjetEndpointUrl:
 class TestSelectNode:
     @pytest.mark.asyncio
     async def test_selects_sqlite_node(self, tmp_path):
+        from app.sqlite_db import SQLiteClient
+
+        db_path = str(tmp_path / "test.db")
         settings = Settings(
             USE_SQLITE=True,
-            SQLITE_DB_PATH=str(tmp_path / "test.db"),
+            SQLITE_DB_PATH=db_path,
         )
+        db = SQLiteClient(db_path)
+        # Insert a test node into the DB
+        await db.insert("nodes", {
+            "id": "test-node",
+            "endpoint_url": "https://127.0.0.1:9090",
+            "public_ip": "127.0.0.1",
+            "connectivity_type": "direct",
+            "status": "online",
+            "health_score": 1.0,
+        })
+
         http_client = httpx.AsyncClient()
-        service = RoutingService(http_client, settings)
+        service = RoutingService(http_client, settings, db)
         result = await service.select_node()
 
         assert result is not None
@@ -288,12 +302,26 @@ class TestSelectNodeFiltering:
 class TestReportOutcome:
     @pytest.mark.asyncio
     async def test_records_outcome_sqlite(self, tmp_path):
+        from app.sqlite_db import SQLiteClient
+
+        db_path = str(tmp_path / "test.db")
         settings = Settings(
             USE_SQLITE=True,
-            SQLITE_DB_PATH=str(tmp_path / "test.db"),
+            SQLITE_DB_PATH=db_path,
         )
+        db = SQLiteClient(db_path)
+        # Insert a test node into the DB
+        await db.insert("nodes", {
+            "id": "test-node",
+            "endpoint_url": "https://127.0.0.1:9090",
+            "public_ip": "127.0.0.1",
+            "connectivity_type": "direct",
+            "status": "online",
+            "health_score": 1.0,
+        })
+
         http_client = httpx.AsyncClient()
-        service = RoutingService(http_client, settings)
+        service = RoutingService(http_client, settings, db)
 
         # First select a node (populates cache)
         node = await service.select_node()

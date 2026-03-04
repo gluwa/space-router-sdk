@@ -18,9 +18,10 @@ CACHE_EXPIRATIONS: Dict[str, float] = {}
 class AuthService:
     """Authenticates API key requests."""
 
-    def __init__(self, http_client: httpx.AsyncClient, settings: Settings) -> None:
+    def __init__(self, http_client: httpx.AsyncClient, settings: Settings, db=None) -> None:
         self._client = http_client
         self._settings = settings
+        self._db = db
         self._cache_ttl = 300  # 5 minutes
 
     async def validate_key_hash(self, key_hash: str) -> Optional[Dict]:
@@ -48,10 +49,24 @@ class AuthService:
 
     async def _validate_with_sqlite(self, key_hash: str) -> Optional[Dict]:
         """Validate a key hash using SQLite."""
-        # Simple stub that approves all keys for local testing
-        # In a real implementation, this would query the database
-        # For now, we'll always return a success for testing purposes
-        return {
-            "api_key_id": "local-test-key-id",
-            "rate_limit_rpm": 60,
-        }
+        if self._db is None:
+            logger.warning("No database configured for auth validation")
+            return None
+
+        try:
+            row = await self._db.select(
+                "api_keys",
+                params={"key_hash": key_hash, "is_active": "1"},
+                single=True,
+            )
+            if row is None:
+                logger.debug("No active API key found for hash %s...", key_hash[:12])
+                return None
+
+            return {
+                "api_key_id": row["id"],
+                "rate_limit_rpm": row["rate_limit_rpm"],
+            }
+        except Exception as e:
+            logger.error("SQLite auth validation error: %s", e)
+            return None

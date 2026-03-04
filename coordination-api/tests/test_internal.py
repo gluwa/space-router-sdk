@@ -1,5 +1,7 @@
 """Tests for the internal endpoints (proxy-gateway contract)."""
 
+import sqlite3
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -19,9 +21,9 @@ def _setup_app(settings: Settings) -> TestClient:
     app.state.settings = settings
     app.state.http_client = http_client
     app.state.db = db
-    app.state.auth_service = AuthService(http_client, settings)
+    app.state.auth_service = AuthService(http_client, settings, db)
     app.state.ip_info_service = IPInfoService(http_client, settings.IPINFO_TOKEN)
-    app.state.routing_service = RoutingService(http_client, settings)
+    app.state.routing_service = RoutingService(http_client, settings, db)
 
     # Override cached settings so verify_internal_secret uses our test settings
     get_settings.cache_clear()
@@ -33,8 +35,19 @@ def _setup_app(settings: Settings) -> TestClient:
 
 class TestAuthValidate:
     def test_valid_key(self, settings):
-        """SQLite auth stub approves all keys for local testing."""
+        """SQLite auth validates keys against the database."""
         client = _setup_app(settings)
+
+        # Insert an API key directly via sqlite3 (sync) so validation succeeds
+        conn = sqlite3.connect(settings.SQLITE_DB_PATH)
+        conn.execute(
+            "INSERT INTO api_keys (id, name, key_hash, key_prefix, rate_limit_rpm, is_active, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+            ("test-key-id", "test-key", "abc123hash", "sr_live_test", 60, 1),
+        )
+        conn.commit()
+        conn.close()
+
         resp = client.post(
             "/internal/auth/validate",
             json={"key_hash": "abc123hash"},
@@ -90,8 +103,19 @@ class TestAuthValidate:
 
 class TestRouteSelect:
     def test_selects_local_node(self, settings):
-        """SQLite mode creates a local test node."""
+        """SQLite mode selects a node from the database."""
         client = _setup_app(settings)
+
+        # Insert a test node directly via sqlite3
+        conn = sqlite3.connect(settings.SQLITE_DB_PATH)
+        conn.execute(
+            "INSERT INTO nodes (id, endpoint_url, public_ip, connectivity_type, status, health_score, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+            ("test-node", "https://127.0.0.1:9090", "127.0.0.1", "direct", "online", 1.0),
+        )
+        conn.commit()
+        conn.close()
+
         resp = client.get(
             "/internal/route/select",
             headers={"X-Internal-API-Key": settings.INTERNAL_API_SECRET},

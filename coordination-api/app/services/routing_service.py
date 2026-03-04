@@ -26,9 +26,10 @@ class ProxyNode:
 class RoutingService:
     """Selects optimal nodes for routing traffic."""
 
-    def __init__(self, http_client: httpx.AsyncClient, settings: Settings) -> None:
+    def __init__(self, http_client: httpx.AsyncClient, settings: Settings, db=None) -> None:
         self._client = http_client
         self._settings = settings
+        self._db = db
 
         # Local cache of nodes for SQLite implementation
         self._nodes_cache: Dict[str, ProxyNode] = {}
@@ -59,39 +60,85 @@ class RoutingService:
         ip_type: Optional[str] = None,
         ip_region: Optional[str] = None,
     ) -> Optional[ProxyNode]:
-        """Select a node using SQLite data with optional ip_type/ip_region filtering."""
-        if not self._nodes_cache:
-            # For testing, create a mock local node
-            node = ProxyNode(
-                node_id="local-test-node-id",
-                endpoint_url="http://127.0.0.1:9090",
-                health_score=1.0,
+        """Select a node using SQLite data with optional ip_type/ip_region filtering.
+
+        Checks the in-memory cache first (populated by register_cached_node or
+        previous DB queries).  Falls through to the database when the cache is
+        empty.
+        """
+        # --- 1. Try the in-memory cache ---
+        if self._nodes_cache:
+            candidates = list(self._nodes_cache.values())
+            if ip_type or ip_region:
+                filtered = candidates
+                if ip_type:
+                    filtered = [n for n in filtered if n.ip_type == ip_type]
+                if ip_region:
+                    region_lower = ip_region.lower()
+                    filtered = [n for n in filtered if region_lower in (n.ip_region or "").lower()]
+                if filtered:
+                    candidates = filtered
+                else:
+                    logger.warning(
+                        "No nodes match ip_type=%s ip_region=%s — falling back to all nodes",
+                        ip_type, ip_region,
+                    )
+            selected = random.choice(candidates)
+            return selected
+
+        # --- 2. Query the database ---
+        if self._db is None:
+            logger.warning("No database configured for node selection")
+            return self._get_fallback_node()
+
+        try:
+            rows = await self._db.select(
+                "nodes",
+                params={"status": "online"},
             )
+            if not rows:
+                logger.warning("No online nodes found in database")
+                return None
+
+            # Apply ip_type/ip_region filters if specified
+            candidates = rows
+            if ip_type or ip_region:
+                filtered = candidates
+                if ip_type:
+                    filtered = [r for r in filtered if r.get("ip_type") == ip_type]
+                if ip_region:
+                    region_lower = ip_region.lower()
+                    filtered = [r for r in filtered if region_lower in (r.get("ip_region") or "").lower()]
+
+                if filtered:
+                    candidates = filtered
+                else:
+                    logger.warning(
+                        "No nodes match ip_type=%s ip_region=%s — falling back to all nodes",
+                        ip_type, ip_region,
+                    )
+
+            # Weighted random selection based on health_score
+            selected = random.choices(
+                candidates,
+                weights=[r.get("health_score", 1.0) for r in candidates],
+                k=1,
+            )[0]
+
+            node = ProxyNode(
+                node_id=selected["id"],
+                endpoint_url=selected["endpoint_url"],
+                health_score=selected.get("health_score", 1.0),
+                ip_type=selected.get("ip_type", ""),
+                ip_region=selected.get("ip_region", ""),
+            )
+
+            # Update local cache
             self._nodes_cache[node.node_id] = node
             return node
-
-        candidates = list(self._nodes_cache.values())
-
-        # Apply filters if specified
-        if ip_type or ip_region:
-            filtered = candidates
-            if ip_type:
-                filtered = [n for n in filtered if n.ip_type == ip_type]
-            if ip_region:
-                # Case-insensitive substring match for region
-                region_lower = ip_region.lower()
-                filtered = [n for n in filtered if region_lower in (n.ip_region or "").lower()]
-
-            if filtered:
-                candidates = filtered
-            else:
-                logger.warning(
-                    "No nodes match ip_type=%s ip_region=%s — falling back to all nodes",
-                    ip_type, ip_region,
-                )
-
-        selected = random.choice(candidates)
-        return selected
+        except Exception as e:
+            logger.error("SQLite node selection error: %s", e)
+            return None
 
     def _get_fallback_node(self) -> Optional[ProxyNode]:
         """Get a fallback proxy provider when no residential nodes are available."""
@@ -136,16 +183,37 @@ class RoutingService:
         self, node_id: str, success: bool, latency_ms: int, bytes_transferred: int
     ) -> None:
         """Record a routing outcome using SQLite."""
-        # Update the health score in our local cache
-        if node_id in self._nodes_cache:
+        if self._db is None:
+            return
+
+        try:
+            # Insert into route_outcomes table
+            await self._db.insert(
+                "route_outcomes",
+                {
+                    "node_id": node_id,
+                    "success": 1 if success else 0,
+                    "latency_ms": latency_ms,
+                    "bytes_transferred": bytes_transferred,
+                },
+                return_rows=False,
+            )
+
+            # Update node health score
+            current = self._node_health.get(node_id, 1.0)
             if success:
-                # Slightly increase health score for successful requests
-                self._node_health[node_id] = min(1.0, self._node_health.get(node_id, 0.9) + 0.1)
+                new_score = min(1.0, current + 0.1)
             else:
-                # Significantly decrease health score for failed requests
-                self._node_health[node_id] = max(0.1, self._node_health.get(node_id, 0.5) - 0.3)
+                new_score = max(0.1, current - 0.3)
+            self._node_health[node_id] = new_score
 
-            # Update the node health score
-            self._nodes_cache[node_id].health_score = self._node_health[node_id]
+            if node_id in self._nodes_cache:
+                self._nodes_cache[node_id].health_score = new_score
 
-        # In a real implementation, this would write to the database
+            await self._db.update(
+                "nodes",
+                {"health_score": new_score},
+                params={"id": node_id},
+            )
+        except Exception as e:
+            logger.error("SQLite outcome report error: %s", e)
