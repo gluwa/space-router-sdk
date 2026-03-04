@@ -26,10 +26,6 @@ def verify_internal_secret(
     if settings.INTERNAL_API_SECRET and api_key == settings.INTERNAL_API_SECRET:
         return True
 
-    # For local SQLite testing, we'll be more permissive
-    if settings.USE_SQLITE and (api_key == "test_secret" or api_key == settings.INTERNAL_API_SECRET or not settings.INTERNAL_API_SECRET):
-        return True
-
     logger.warning("Unauthorized internal API access attempt")
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

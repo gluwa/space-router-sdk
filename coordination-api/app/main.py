@@ -50,7 +50,7 @@ async def startup_db_client():
         app.state.db = SQLiteClient(settings.SQLITE_DB_PATH)
     
     # Initialize services
-    app.state.auth_service = AuthService(http_client, settings)
+    app.state.auth_service = AuthService(http_client, settings, db=app.state.db)
     app.state.routing_service = RoutingService(http_client, settings, db=app.state.db)
 
 
