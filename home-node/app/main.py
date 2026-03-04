@@ -21,6 +21,7 @@ import httpx
 from app.config import settings
 from app.proxy_handler import handle_client
 from app.registration import deregister_node, detect_public_ip, register_node
+from app.tls import create_server_ssl_context, ensure_certificates
 
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
@@ -75,11 +76,16 @@ async def _run(settings_override=None) -> None:  # noqa: ANN001
             logger.exception("Failed to register with Coordination API — aborting")
             sys.exit(1)
 
-        # 4. Start TCP server
+        # 4. Start TLS server
+        ensure_certificates(s.TLS_CERT_PATH, s.TLS_KEY_PATH)
+        ssl_ctx = create_server_ssl_context(s.TLS_CERT_PATH, s.TLS_KEY_PATH)
+
         handler = functools.partial(handle_client, settings=s)
-        server = await asyncio.start_server(handler, host="0.0.0.0", port=s.NODE_PORT)
+        server = await asyncio.start_server(
+            handler, host="0.0.0.0", port=s.NODE_PORT, ssl=ssl_ctx,
+        )
         logger.info(
-            "Home Node listening on port %d (node_id=%s, tailscale=%s)",
+            "Home Node listening on port %d with TLS (node_id=%s, tailscale=%s)",
             s.NODE_PORT, node_id, tailscale_ip or "disabled",
         )
 

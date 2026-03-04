@@ -62,10 +62,10 @@ async def register_node(
     Raises on failure — the caller should abort startup.
     """
     if tailscale_ip:
-        endpoint_url = f"http://{tailscale_ip}:{settings.NODE_PORT}"
+        endpoint_url = f"https://{tailscale_ip}:{settings.NODE_PORT}"
         connectivity_type = "tailscale"
     else:
-        endpoint_url = f"http://{public_ip}:{settings.NODE_PORT}"
+        endpoint_url = f"https://{public_ip}:{settings.NODE_PORT}"
         connectivity_type = "direct"
 
     payload = {

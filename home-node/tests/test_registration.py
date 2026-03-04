@@ -120,7 +120,7 @@ class TestRegisterNode:
         req = respx.calls[0].request
         import json
         body = json.loads(req.content)
-        assert body["endpoint_url"] == "http://1.2.3.4:9090"
+        assert body["endpoint_url"] == "https://1.2.3.4:9090"
         assert body["public_ip"] == "1.2.3.4"
         assert body["connectivity_type"] == "direct"
         assert body["node_type"] == "residential"
@@ -156,7 +156,7 @@ class TestRegisterNode:
         req = respx.calls[0].request
         import json
         body = json.loads(req.content)
-        assert body["endpoint_url"] == "http://100.64.1.5:9090"
+        assert body["endpoint_url"] == "https://100.64.1.5:9090"
         assert body["public_ip"] == "1.2.3.4"
         assert body["connectivity_type"] == "tailscale"
 

@@ -22,5 +22,9 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = "INFO"
 
+    # TLS — auto-generates a self-signed cert if files don't exist
+    TLS_CERT_PATH: str = "certs/node.crt"
+    TLS_KEY_PATH: str = "certs/node.key"
+
 
 settings = Settings()

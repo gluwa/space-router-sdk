@@ -148,6 +148,10 @@ async def _connect_to_node(endpoint_url: str, timeout: float) -> NodeConnection 
         if parsed.scheme == "https":
             import ssl
             ctx = ssl.create_default_context()
+            # Home Nodes use self-signed certificates — skip verification.
+            # TLS still encrypts the connection in transit.
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port, ssl=ctx),
                 timeout=timeout,

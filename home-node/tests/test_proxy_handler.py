@@ -1,31 +1,44 @@
 """Tests for the Home Node proxy handler.
 
-Each test starts a real asyncio TCP server (home-node) and a fake target
+Each test starts a real asyncio TLS server (home-node) and a fake target
 server, then sends requests through the home-node and asserts on the result.
 """
 
 import asyncio
 import functools
+import ssl
 
 import pytest
 
 from app.proxy_handler import handle_client, parse_headers
+from app.tls import create_server_ssl_context, ensure_certificates
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _client_ssl_context():
+    """Return an SSL context that trusts self-signed certs (for test clients)."""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
 async def _start_home_node(settings):
-    """Start the home-node TCP server on a random port; return (server, port)."""
+    """Start the home-node TLS server on a random port; return (server, port)."""
+    ensure_certificates(settings.TLS_CERT_PATH, settings.TLS_KEY_PATH)
+    ssl_ctx = create_server_ssl_context(settings.TLS_CERT_PATH, settings.TLS_KEY_PATH)
+
     handler = functools.partial(handle_client, settings=settings)
-    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    server = await asyncio.start_server(handler, "127.0.0.1", 0, ssl=ssl_ctx)
     port = server.sockets[0].getsockname()[1]
     return server, port
 
 
 async def _start_target_server(handler):
-    """Start a fake target server; return (server, port)."""
+    """Start a fake target server (plain TCP); return (server, port)."""
     server = await asyncio.start_server(handler, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     return server, port
@@ -47,13 +60,63 @@ class TestParseHeaders:
 
 
 # ---------------------------------------------------------------------------
-# CONNECT tunnel
+# TLS
+# ---------------------------------------------------------------------------
+
+class TestTLS:
+    @pytest.mark.asyncio
+    async def test_tls_handshake_succeeds(self, settings):
+        """Client can complete a TLS handshake with the home-node."""
+        home, home_port = await _start_home_node(settings)
+
+        try:
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", home_port, ssl=_client_ssl_context(),
+            )
+            # Connection succeeded — send a minimal request to confirm it works
+            writer.write(b"GET http://127.0.0.1:1/test HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            await writer.drain()
+
+            resp = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+            # Should get some HTTP response (502 since target doesn't exist)
+            assert len(resp) > 0
+
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            home.close()
+            await home.wait_closed()
+
+    @pytest.mark.asyncio
+    async def test_plain_tcp_rejected(self, settings):
+        """A plain TCP (non-TLS) client cannot talk to the TLS server."""
+        home, home_port = await _start_home_node(settings)
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", home_port)
+            writer.write(b"GET / HTTP/1.1\r\nHost: test\r\n\r\n")
+            await writer.drain()
+
+            # The TLS server should reject/close the non-TLS connection
+            resp = await asyncio.wait_for(reader.read(4096), timeout=2.0)
+            # Either empty (connection closed) or an error — no valid HTTP response
+            assert b"200" not in resp
+
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            home.close()
+            await home.wait_closed()
+
+
+# ---------------------------------------------------------------------------
+# CONNECT tunnel (over TLS)
 # ---------------------------------------------------------------------------
 
 class TestConnectTunnel:
     @pytest.mark.asyncio
     async def test_connect_tunnel_echo(self, settings):
-        """CONNECT through home-node → target echoes data back."""
+        """CONNECT through home-node (TLS) → target echoes data back."""
 
         async def echo_handler(reader, writer):
             try:
@@ -73,7 +136,9 @@ class TestConnectTunnel:
         home, home_port = await _start_home_node(settings)
 
         try:
-            reader, writer = await asyncio.open_connection("127.0.0.1", home_port)
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", home_port, ssl=_client_ssl_context(),
+            )
 
             # Send CONNECT to home-node
             writer.write(
@@ -107,7 +172,9 @@ class TestConnectTunnel:
         home, home_port = await _start_home_node(settings)
 
         try:
-            reader, writer = await asyncio.open_connection("127.0.0.1", home_port)
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", home_port, ssl=_client_ssl_context(),
+            )
             writer.write(
                 b"CONNECT 127.0.0.1:1 HTTP/1.1\r\n"
                 b"Host: 127.0.0.1:1\r\n"
@@ -127,13 +194,13 @@ class TestConnectTunnel:
 
 
 # ---------------------------------------------------------------------------
-# HTTP forward
+# HTTP forward (over TLS)
 # ---------------------------------------------------------------------------
 
 class TestHTTPForward:
     @pytest.mark.asyncio
     async def test_http_forward_get(self, settings):
-        """HTTP GET through home-node → target returns 200 + body."""
+        """HTTP GET through home-node (TLS) → target returns 200 + body."""
 
         async def target_handler(reader, writer):
             # Read the forwarded request
@@ -154,7 +221,9 @@ class TestHTTPForward:
         home, home_port = await _start_home_node(settings)
 
         try:
-            reader, writer = await asyncio.open_connection("127.0.0.1", home_port)
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", home_port, ssl=_client_ssl_context(),
+            )
             writer.write(
                 f"GET http://127.0.0.1:{target_port}/test HTTP/1.1\r\n"
                 f"Host: 127.0.0.1:{target_port}\r\n"
@@ -162,8 +231,14 @@ class TestHTTPForward:
             )
             await writer.drain()
 
-            resp = await asyncio.wait_for(reader.read(4096), timeout=5.0)
-            text = resp.decode("latin-1")
+            # Read until connection closes (TLS may split headers and body)
+            chunks = []
+            while True:
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            text = b"".join(chunks).decode("latin-1")
             assert "200 OK" in text
             assert "OK" in text
 
@@ -177,7 +252,7 @@ class TestHTTPForward:
 
     @pytest.mark.asyncio
     async def test_http_forward_post_with_body(self, settings):
-        """HTTP POST with a body is forwarded correctly."""
+        """HTTP POST with a body is forwarded correctly over TLS."""
         received_body = []
 
         async def target_handler(reader, writer):
@@ -201,7 +276,9 @@ class TestHTTPForward:
         home, home_port = await _start_home_node(settings)
 
         try:
-            reader, writer = await asyncio.open_connection("127.0.0.1", home_port)
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", home_port, ssl=_client_ssl_context(),
+            )
             body = b'{"key": "value"}'
             writer.write(
                 f"POST http://127.0.0.1:{target_port}/data HTTP/1.1\r\n"
@@ -212,8 +289,14 @@ class TestHTTPForward:
             )
             await writer.drain()
 
-            resp = await asyncio.wait_for(reader.read(4096), timeout=5.0)
-            text = resp.decode("latin-1")
+            # Read until connection closes (TLS may split headers and body)
+            chunks = []
+            while True:
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            text = b"".join(chunks).decode("latin-1")
             assert "201 Created" in text
             assert "created" in text
 
@@ -235,7 +318,9 @@ class TestHTTPForward:
         home, home_port = await _start_home_node(settings)
 
         try:
-            reader, writer = await asyncio.open_connection("127.0.0.1", home_port)
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", home_port, ssl=_client_ssl_context(),
+            )
             writer.write(
                 b"GET http://127.0.0.1:1/nope HTTP/1.1\r\n"
                 b"Host: 127.0.0.1:1\r\n"
@@ -261,11 +346,13 @@ class TestHTTPForward:
 class TestMalformed:
     @pytest.mark.asyncio
     async def test_malformed_request(self, settings):
-        """Sending garbage → 400 Bad Request."""
+        """Sending garbage over TLS → 400 Bad Request."""
         home, home_port = await _start_home_node(settings)
 
         try:
-            reader, writer = await asyncio.open_connection("127.0.0.1", home_port)
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", home_port, ssl=_client_ssl_context(),
+            )
             writer.write(b"NOT_VALID\r\n\r\n")
             await writer.drain()
 
@@ -315,7 +402,9 @@ class TestHeaderStripping:
         home, home_port = await _start_home_node(settings)
 
         try:
-            reader, writer = await asyncio.open_connection("127.0.0.1", home_port)
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", home_port, ssl=_client_ssl_context(),
+            )
             writer.write(
                 f"GET http://127.0.0.1:{target_port}/check HTTP/1.1\r\n"
                 f"Host: 127.0.0.1:{target_port}\r\n"
