@@ -9,8 +9,8 @@ Space Router provides a single proxy URL that routes agent HTTP traffic through 
 | Component | Language | Description |
 |---|---|---|
 | **Proxy Gateway** | Python / asyncio | Agent-facing HTTP forward proxy. Authenticates requests, selects a residential node, and tunnels traffic through it. |
-| **Coordination API** | Python / FastAPI | Central brain. Node registry, routing decisions, health monitoring, API key management. |
-| **Home Node Daemon** | Python / asyncio | Runs on residential machines (macOS). Accepts proxied requests and forwards them from its residential IP. |
+| **Coordination API** | Python / FastAPI | Central brain. Node registry, IP classification via ipinfo.io, routing decisions, health monitoring, API key management. |
+| **Home Node Daemon** | Python / asyncio | Runs on residential machines (macOS). Accepts proxied requests and forwards them from its residential IP. Receives IP classification from the Coordination API at registration. |
 
 ```
                      ┌──────────────────┐
@@ -60,6 +60,9 @@ pip install -r requirements.txt
 export SR_USE_SQLITE=true
 export SR_SQLITE_DB_PATH=space_router.db
 export SR_INTERNAL_API_SECRET=local-dev-secret
+
+# Optional: ipinfo.io token for IP classification (works without, but rate-limited)
+export SR_IPINFO_TOKEN=your-ipinfo-token
 
 # Optional: Configure fallback proxy
 export SR_PROXYJET_HOST=proxy.proxyjet.io
@@ -124,6 +127,12 @@ Save the `api_key` from the response — it's only shown once.
 # Send a request through the full pipeline:
 # Agent → Proxy Gateway → Home Node → target
 curl -x http://sr_live_YOUR_API_KEY@localhost:8080 http://httpbin.org/ip
+
+# Request a specific IP type and region:
+curl -x http://sr_live_YOUR_API_KEY@localhost:8080 \
+  -H "X-SpaceRouter-IP-Type: residential" \
+  -H "X-SpaceRouter-Region: Seoul, KR" \
+  http://httpbin.org/ip
 ```
 
 ## Quick Start (Production with Supabase)
@@ -176,6 +185,32 @@ Or with curl:
 curl -x http://sr_live_YOUR_API_KEY@localhost:8080 https://example.com
 ```
 
+### IP-Based Routing
+
+Agents can request a specific IP type and region by adding headers to their proxy requests:
+
+```python
+import httpx
+
+proxy_url = "http://sr_live_YOUR_API_KEY@localhost:8080"
+
+async with httpx.AsyncClient(proxy=proxy_url) as client:
+    response = await client.get(
+        "https://target-website.com/data",
+        headers={
+            "X-SpaceRouter-IP-Type": "residential",   # residential, mobile, datacenter, business
+            "X-SpaceRouter-Region": "Seoul, KR",       # city, country substring match
+        },
+    )
+```
+
+When a Home Node registers, the Coordination API calls [ipinfo.io](https://ipinfo.io) to classify its public IP:
+
+- **IP type:** residential, mobile, datacenter, or business (derived from ipinfo privacy/company/carrier/org data)
+- **Region:** city and country code (e.g., "Seoul, KR", "Ashburn, US")
+
+The routing headers are stripped before the request is forwarded to the Home Node. If no node matches the requested type/region, the router falls back to any available node.
+
 ## UPnP / NAT-PMP Setup
 
 Home Nodes run on residential machines behind NAT routers. UPnP (Universal Plug and Play) and NAT-PMP (NAT Port Mapping Protocol) automatically configure port forwarding on the router so the Proxy Gateway can reach Home Nodes.
@@ -222,6 +257,7 @@ fly secrets set \
   SR_SUPABASE_URL=https://your-project.supabase.co \
   SR_SUPABASE_SERVICE_KEY=your-service-key \
   SR_INTERNAL_API_SECRET=your-strong-secret \
+  SR_IPINFO_TOKEN=your-ipinfo-token \
   SR_PROXYJET_HOST=proxy.proxyjet.io \
   SR_PROXYJET_PORT=8080 \
   SR_PROXYJET_USERNAME=your-user \
@@ -311,13 +347,13 @@ docker run -d \
 ## Running Tests
 
 ```bash
-# Proxy Gateway (31 tests)
-cd proxy-gateway && pytest tests/ -v
-
-# Coordination API (22 tests)
+# Coordination API (47 tests)
 cd coordination-api && pytest tests/ -v
 
-# Home Node Daemon
+# Proxy Gateway (36 tests)
+cd proxy-gateway && pytest tests/ -v
+
+# Home Node Daemon (36 tests)
 cd home-node && pytest tests/ -v
 ```
 
@@ -346,6 +382,7 @@ All settings are via environment variables with the `SR_` prefix.
 |---|---|---|
 | `SR_PORT` | 8000 | API server port |
 | `SR_INTERNAL_API_SECRET` | — | Shared secret for internal endpoints |
+| `SR_IPINFO_TOKEN` | — | ipinfo.io API token for IP classification (optional — free tier works without) |
 | `SR_SUPABASE_URL` | — | Supabase project URL |
 | `SR_SUPABASE_SERVICE_KEY` | — | Supabase service role key |
 | `SR_PROXYJET_HOST` | — | Proxyjet.io proxy hostname |
@@ -378,6 +415,15 @@ All settings are via environment variables with the `SR_` prefix.
 Standard HTTP forward proxy. Agents send requests through it like any other proxy.
 
 **Authentication:** `Proxy-Authorization: Basic base64(api_key:)`
+
+**Request headers (optional routing):**
+
+| Header | Description |
+|---|---|
+| `X-SpaceRouter-IP-Type` | Preferred IP type: `residential`, `mobile`, `datacenter`, `business` |
+| `X-SpaceRouter-Region` | Preferred region substring (e.g., `Seoul, KR`). Case-insensitive match. |
+
+These headers are stripped before the request is forwarded to the Home Node.
 
 **Response headers:**
 
@@ -412,7 +458,7 @@ Standard HTTP forward proxy. Agents send requests through it like any other prox
 | Endpoint | Description |
 |---|---|
 | `POST /internal/auth/validate` | Validate an API key hash |
-| `GET /internal/route/select` | Select best available node |
+| `GET /internal/route/select` | Select best available node. Optional query params: `ip_type`, `ip_region` |
 | `POST /internal/route/report` | Report routing outcome |
 
 #### Health
@@ -440,3 +486,5 @@ The Home Node accepts raw TCP connections from the Proxy Gateway. It supports:
 The Home Node strips `X-SpaceRouter-*` and `Proxy-Authorization` headers before forwarding to target servers.
 
 On startup it configures UPnP/NAT-PMP port mapping (if enabled), auto-registers with the Coordination API (`POST /nodes`), and sets status to `offline` on graceful shutdown. When UPnP is active, the registered endpoint uses the router's external IP with the mapped port while the residential public IP is preserved as metadata.
+
+At registration, the Coordination API classifies the node's public IP via ipinfo.io and returns the `ip_type` (residential, mobile, datacenter, business) and `ip_region` (e.g., "Seoul, KR") in the response. The Home Node logs this classification.
