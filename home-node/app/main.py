@@ -35,9 +35,21 @@ async def _run(settings_override=None) -> None:  # noqa: ANN001
     s = settings_override or settings
     stop_event = asyncio.Event()
 
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, stop_event.set)
+    if sys.platform != "win32":
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop_event.set)
+    else:
+        # Windows: loop.add_signal_handler() is not supported.
+        # Use signal.signal() and schedule the event via call_soon_threadsafe
+        # since signal handlers can interrupt the event loop.
+        loop = asyncio.get_running_loop()
+
+        def _handle_signal(signum, frame):  # noqa: ANN001
+            loop.call_soon_threadsafe(stop_event.set)
+
+        signal.signal(signal.SIGINT, _handle_signal)
+        signal.signal(signal.SIGTERM, _handle_signal)
 
     async with httpx.AsyncClient() as http_client:
         # 1. Try UPnP/NAT-PMP port mapping (if enabled)

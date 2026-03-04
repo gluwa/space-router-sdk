@@ -3,8 +3,3 @@ pydantic-settings>=2,<3
 python-dotenv>=1,<2
 cryptography>=42,<45
 miniupnpc>=2.2,<3
-
-# Testing
-pytest>=8,<9
-pytest-asyncio>=0.23,<1
-respx>=0.21,<1

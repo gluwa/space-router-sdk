@@ -8,15 +8,11 @@
 
     <key>ProgramArguments</key>
     <array>
-        <!-- Adjust this path to your Python installation -->
-        <string>/usr/local/bin/python3</string>
-        <string>-m</string>
-        <string>app.main</string>
+        <string>/opt/spacerouter/space-router-node</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <!-- Adjust to wherever the home-node code is installed -->
-    <string>/opt/spacerouter/home-node</string>
+    <string>/opt/spacerouter</string>
 
     <key>EnvironmentVariables</key>
     <dict>
