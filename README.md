@@ -18,13 +18,13 @@ Space Router provides a single proxy URL that routes agent HTTP traffic through 
   (HTTP proxy)       │  :8080 (proxy)   │
                      │  :8081 (mgmt)    │
                      └────────┬─────────┘
-                              │  Tailscale (WireGuard)
+                              │
                      ┌────────▼─────────┐
                      │ Coordination API │
                      │  :8000           │
                      │  (Database)      │
                      └────────┬─────────┘
-                              │  Tailscale (WireGuard)
+                              │  UPnP / Direct IP
                  ┌────────────┼────────────┐
                  ▼            ▼            ▼
            Home Node    Home Node    proxyjet.io
@@ -32,7 +32,7 @@ Space Router provides a single proxy URL that routes agent HTTP traffic through 
        (residential)  (residential)
 ```
 
-Home Nodes run on residential machines behind NAT. [Tailscale](https://tailscale.com/) provides a WireGuard mesh VPN so the Proxy Gateway can reach them without port forwarding.
+Home Nodes run on residential machines behind NAT. UPnP/NAT-PMP automatically configures port forwarding on the router so the Proxy Gateway can reach them without manual setup.
 
 ## Database Options
 
@@ -97,8 +97,8 @@ export SR_COORDINATION_API_URL=http://localhost:8000
 # For local dev, set PUBLIC_IP so it doesn't try external IP detection
 export SR_PUBLIC_IP=127.0.0.1
 
-# Tailscale: disabled for local dev (no NAT to traverse)
-export SR_TAILSCALE_ENABLED=false
+# UPnP: disabled for local dev (no NAT to traverse)
+export SR_UPNP_ENABLED=false
 
 # Optional: set node metadata
 export SR_NODE_LABEL=my-macbook
@@ -176,32 +176,38 @@ Or with curl:
 curl -x http://sr_live_YOUR_API_KEY@localhost:8080 https://example.com
 ```
 
-## Tailscale Setup
+## UPnP / NAT-PMP Setup
 
-Home Nodes run on residential machines behind NAT routers. Tailscale creates a WireGuard mesh VPN so the Proxy Gateway can reach Home Nodes without port forwarding.
+Home Nodes run on residential machines behind NAT routers. UPnP (Universal Plug and Play) and NAT-PMP (NAT Port Mapping Protocol) automatically configure port forwarding on the router so the Proxy Gateway can reach Home Nodes.
 
-### 1. Create a Tailscale account
+### How it works
 
-Sign up at [tailscale.com](https://tailscale.com/) and create a tailnet.
+1. On startup, the Home Node discovers the router via UPnP/NAT-PMP
+2. It requests a port mapping (e.g. external port 9090 → internal port 9090)
+3. The router's external IP and mapped port are registered with the Coordination API
+4. The Proxy Gateway connects to the Home Node via the router's public IP
+5. On shutdown, the port mapping is removed
 
-### 2. Configure ACLs
+### Requirements
 
-Apply `tailscale/acl.json` to your tailnet via the [Tailscale admin console](https://login.tailscale.com/admin/acls). This restricts traffic so only the Proxy Gateway can reach Home Nodes.
+- The router must support UPnP IGD or NAT-PMP (most consumer routers do)
+- UPnP must be enabled in the router's settings
+- The `miniupnpc` Python package (installed automatically via requirements.txt)
 
-### 3. Generate auth keys
+### Configuration
 
-In the Tailscale admin console, create reusable + ephemeral auth keys for each component:
+UPnP is enabled by default. Set `SR_UPNP_ENABLED=false` to disable it and fall back to manual port forwarding (direct mode).
 
-- `tag:spacerouter-gateway` — for the Proxy Gateway
-- `tag:spacerouter-node` — for Home Nodes
+The lease duration controls how long the port mapping persists on the router. The Home Node automatically renews the mapping before it expires:
 
-### 4. Set auth keys
+```bash
+export SR_UPNP_ENABLED=true        # Enable UPnP (default)
+export SR_UPNP_LEASE_DURATION=3600  # Lease duration in seconds (default: 3600)
+```
 
-For each component, set `SR_TAILSCALE_AUTH_KEY` to the appropriate auth key. The Home Node will auto-detect its Tailscale IP and register it as the endpoint URL.
+### Direct mode (manual port forwarding)
 
-### Dual-mode support
-
-Tailscale is the default connectivity mode. Home Nodes that have port forwarding configured can set `SR_TAILSCALE_ENABLED=false` to register their public IP directly.
+If UPnP is unavailable or disabled, Home Nodes fall back to direct mode. In this case, you must manually configure port forwarding on your router to forward TCP port 9090 to the Home Node machine.
 
 ## Production Deployment
 
@@ -241,8 +247,7 @@ cd proxy-gateway
 
 fly secrets set \
   SR_COORDINATION_API_URL=https://coordination.spacerouter.io \
-  SR_COORDINATION_API_SECRET=your-strong-secret \
-  SR_TAILSCALE_AUTH_KEY=tskey-auth-xxxxx
+  SR_COORDINATION_API_SECRET=your-strong-secret
 
 fly deploy
 ```
@@ -258,7 +263,6 @@ cd home-node
 pip install -r requirements.txt
 
 export SR_COORDINATION_API_URL=https://coordination.spacerouter.io
-export SR_TAILSCALE_AUTH_KEY=tskey-auth-xxxxx  # Auto-joins the tailnet
 export SR_NODE_LABEL=macbook-home
 export SR_NODE_REGION=us-west
 
@@ -364,8 +368,8 @@ All settings are via environment variables with the `SR_` prefix.
 | `SR_BUFFER_SIZE` | 65536 | TCP read buffer size |
 | `SR_REQUEST_TIMEOUT` | 30.0 | Timeout (seconds) for connecting to target servers |
 | `SR_RELAY_TIMEOUT` | 300.0 | Max duration (seconds) for a CONNECT tunnel relay |
-| `SR_TAILSCALE_ENABLED` | true | Enable Tailscale for NAT traversal |
-| `SR_TAILSCALE_AUTH_KEY` | — | Tailscale auth key for auto-join (reusable + ephemeral recommended) |
+| `SR_UPNP_ENABLED` | true | Enable UPnP/NAT-PMP for automatic port forwarding |
+| `SR_UPNP_LEASE_DURATION` | 3600 | UPnP port mapping lease duration in seconds (0 = permanent) |
 
 ## API Reference
 
@@ -435,4 +439,4 @@ The Home Node accepts raw TCP connections from the Proxy Gateway. It supports:
 
 The Home Node strips `X-SpaceRouter-*` and `Proxy-Authorization` headers before forwarding to target servers.
 
-On startup it detects its Tailscale IP (if enabled), auto-registers with the Coordination API (`POST /nodes`), and sets status to `offline` on graceful shutdown. When Tailscale is active, the registered endpoint uses the Tailscale IP for NAT traversal while the residential public IP is preserved as metadata.
+On startup it configures UPnP/NAT-PMP port mapping (if enabled), auto-registers with the Coordination API (`POST /nodes`), and sets status to `offline` on graceful shutdown. When UPnP is active, the registered endpoint uses the router's external IP with the mapped port while the residential public IP is preserved as metadata.

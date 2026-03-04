@@ -50,20 +50,22 @@ async def register_node(
     settings: Settings,
     public_ip: str,
     *,
-    tailscale_ip: str | None = None,
+    upnp_endpoint: tuple[str, int] | None = None,
 ) -> str:
     """Register this node with the Coordination API.
 
-    If *tailscale_ip* is provided, the ``endpoint_url`` uses the Tailscale
-    address (reachable through the tailnet) and the residential *public_ip*
-    is sent as metadata.  Otherwise falls back to the public IP for both.
+    If *upnp_endpoint* is provided (``(external_ip, external_port)``),
+    the ``endpoint_url`` uses the UPnP-mapped address and the residential
+    *public_ip* is sent as metadata.  Otherwise falls back to the public
+    IP with the configured port (requires manual port forwarding).
 
     Returns the ``node_id`` assigned by the API.
     Raises on failure — the caller should abort startup.
     """
-    if tailscale_ip:
-        endpoint_url = f"https://{tailscale_ip}:{settings.NODE_PORT}"
-        connectivity_type = "tailscale"
+    if upnp_endpoint:
+        upnp_ip, upnp_port = upnp_endpoint
+        endpoint_url = f"https://{upnp_ip}:{upnp_port}"
+        connectivity_type = "upnp"
     else:
         endpoint_url = f"https://{public_ip}:{settings.NODE_PORT}"
         connectivity_type = "direct"

@@ -13,8 +13,9 @@ class Settings(BaseSettings):
 
     PUBLIC_IP: str = ""  # Auto-detected if empty
 
-    TAILSCALE_ENABLED: bool = True
-    TAILSCALE_AUTH_KEY: str = ""  # Reusable auth key for auto-join
+    # UPnP / NAT-PMP automatic port forwarding
+    UPNP_ENABLED: bool = True
+    UPNP_LEASE_DURATION: int = 3600  # seconds; 0 = permanent
 
     BUFFER_SIZE: int = 65536
     REQUEST_TIMEOUT: float = 30.0

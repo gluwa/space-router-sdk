@@ -17,7 +17,7 @@ class RegisterNodeRequest(BaseModel):
     region: str | None = None
     label: str | None = None
     public_ip: str | None = None
-    connectivity_type: str = "direct"  # "tailscale" | "direct" | "external_provider"
+    connectivity_type: str = "direct"  # "upnp" | "direct" | "external_provider"
 
 
 class NodeInfo(BaseModel):
