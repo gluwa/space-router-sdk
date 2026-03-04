@@ -101,6 +101,7 @@ class TestAuthValidator:
     @pytest.mark.asyncio
     async def test_validate_network_error_sqlite_fallback(self, settings, mock_api):
         """In SQLite mode, network errors fall back to local test key."""
+        settings.USE_SQLITE = True
         mock_api.post("http://coordination.test/internal/auth/validate").mock(
             side_effect=httpx.ConnectError("Connection refused")
         )

@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
     
-    # For SQLite testing
-    USE_SQLITE: bool = True
+    # For SQLite testing (defaults to False in production)
+    USE_SQLITE: bool = False
 
     class Config:
         env_prefix = "SR_"

@@ -84,8 +84,7 @@ class AuthValidator:
 
         # Validate with Coordination API
         try:
-            # For local testing
-            headers = {"X-Internal-API-Key": "test_secret"}
+            headers = {"X-Internal-API-Key": self._settings.COORDINATION_API_SECRET}
             
             response = await self._client.post(
                 f"{self._settings.COORDINATION_API_URL}/internal/auth/validate",

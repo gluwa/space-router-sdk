@@ -34,6 +34,7 @@ class TestNodeRouter:
     @pytest.mark.asyncio
     async def test_select_node_network_error_sqlite_fallback(self, settings, mock_api):
         """In SQLite mode, network errors fall back to a local test node."""
+        settings.USE_SQLITE = True
         mock_api.get("http://coordination.test/internal/route/select").mock(
             side_effect=httpx.ConnectError("Connection refused")
         )

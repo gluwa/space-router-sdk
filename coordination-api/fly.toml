@@ -1,4 +1,4 @@
-app = "space-router-coordination-api"
+app = "spacerouter-coordination-api"
 primary_region = "iad"
 
 [build]
