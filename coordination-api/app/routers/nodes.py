@@ -5,6 +5,8 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.services.ip_info_service import IPInfoService
+
 logger = logging.getLogger(__name__)
 
 # Remove the prefix to fix the 404 issue
@@ -30,12 +32,25 @@ class NodeInfo(BaseModel):
     health_score: float
     region: str | None = None
     label: str | None = None
+    ip_type: str | None = None
+    ip_region: str | None = None
     created_at: str
 
 
 @router.post("/nodes", status_code=201)
 async def register_node(body: RegisterNodeRequest, request: Request) -> NodeInfo:
     db = request.app.state.db
+    ip_info_service: IPInfoService = request.app.state.ip_info_service
+
+    # Classify the IP address via ipinfo.io
+    ip_type = None
+    ip_region = None
+    if body.public_ip:
+        classification = await ip_info_service.classify(body.public_ip)
+        if classification:
+            ip_type = classification.ip_type
+            ip_region = classification.ip_region
+
     try:
         rows = await db.insert(
             "nodes",
@@ -48,6 +63,8 @@ async def register_node(body: RegisterNodeRequest, request: Request) -> NodeInfo
                 "health_score": 1.0,
                 "region": body.region,
                 "label": body.label,
+                "ip_type": ip_type,
+                "ip_region": ip_region,
             },
             return_rows=True,
         )

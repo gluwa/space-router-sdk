@@ -28,6 +28,8 @@ CREATE TABLE nodes (
     health_score FLOAT NOT NULL DEFAULT 1.0,
     region TEXT,
     label TEXT,
+    ip_type TEXT,
+    ip_region TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

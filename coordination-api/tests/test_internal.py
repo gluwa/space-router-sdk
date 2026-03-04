@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings, get_settings
 from app.main import app
 from app.services.auth_service import AuthService
+from app.services.ip_info_service import IPInfoService
 from app.services.routing_service import RoutingService
 from app.sqlite_db import SQLiteClient
 
@@ -19,6 +20,7 @@ def _setup_app(settings: Settings) -> TestClient:
     app.state.http_client = http_client
     app.state.db = db
     app.state.auth_service = AuthService(http_client, settings)
+    app.state.ip_info_service = IPInfoService(http_client, settings.IPINFO_TOKEN)
     app.state.routing_service = RoutingService(http_client, settings)
 
     # Override cached settings so verify_internal_secret uses our test settings
@@ -71,6 +73,7 @@ class TestAuthValidate:
         app.state.settings = prod_settings
         app.state.http_client = http_client
         app.state.auth_service = AuthService(http_client, prod_settings)
+        app.state.ip_info_service = IPInfoService(http_client, "")
         app.state.routing_service = RoutingService(http_client, prod_settings)
         client = TestClient(app, raise_server_exceptions=False)
 
@@ -115,6 +118,7 @@ class TestRouteSelect:
         app.state.settings = no_proxyjet_settings
         app.state.http_client = http_client
         app.state.auth_service = AuthService(http_client, no_proxyjet_settings)
+        app.state.ip_info_service = IPInfoService(http_client, "")
         app.state.routing_service = RoutingService(http_client, no_proxyjet_settings)
         client = TestClient(app, raise_server_exceptions=False)
 
@@ -123,6 +127,98 @@ class TestRouteSelect:
             headers={"X-Internal-API-Key": no_proxyjet_settings.INTERNAL_API_SECRET},
         )
         assert resp.status_code == 503
+
+
+class TestRouteSelectFiltering:
+    """Verify ip_type and ip_region query params are forwarded to the routing service."""
+
+    def test_select_with_ip_type_param(self, settings):
+        client = _setup_app(settings)
+
+        # Register nodes with different ip_types via the routing service
+        routing_svc: RoutingService = app.state.routing_service
+        from app.services.routing_service import ProxyNode
+        routing_svc.register_cached_node(ProxyNode(
+            node_id="residential-node",
+            endpoint_url="https://10.0.0.1:9090",
+            health_score=1.0,
+            ip_type="residential",
+            ip_region="Seoul, KR",
+        ))
+        routing_svc.register_cached_node(ProxyNode(
+            node_id="dc-node",
+            endpoint_url="https://10.0.0.2:9090",
+            health_score=1.0,
+            ip_type="datacenter",
+            ip_region="Ashburn, US",
+        ))
+
+        resp = client.get(
+            "/internal/route/select",
+            params={"ip_type": "residential"},
+            headers={"X-Internal-API-Key": settings.INTERNAL_API_SECRET},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["node_id"] == "residential-node"
+
+    def test_select_with_ip_region_param(self, settings):
+        client = _setup_app(settings)
+
+        routing_svc: RoutingService = app.state.routing_service
+        from app.services.routing_service import ProxyNode
+        routing_svc.register_cached_node(ProxyNode(
+            node_id="kr-node",
+            endpoint_url="https://10.0.0.1:9090",
+            health_score=1.0,
+            ip_type="residential",
+            ip_region="Seoul, KR",
+        ))
+        routing_svc.register_cached_node(ProxyNode(
+            node_id="us-node",
+            endpoint_url="https://10.0.0.2:9090",
+            health_score=1.0,
+            ip_type="residential",
+            ip_region="Ashburn, US",
+        ))
+
+        resp = client.get(
+            "/internal/route/select",
+            params={"ip_region": "Seoul"},
+            headers={"X-Internal-API-Key": settings.INTERNAL_API_SECRET},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["node_id"] == "kr-node"
+
+    def test_select_with_both_params(self, settings):
+        client = _setup_app(settings)
+
+        routing_svc: RoutingService = app.state.routing_service
+        from app.services.routing_service import ProxyNode
+        routing_svc.register_cached_node(ProxyNode(
+            node_id="kr-residential",
+            endpoint_url="https://10.0.0.1:9090",
+            health_score=1.0,
+            ip_type="residential",
+            ip_region="Seoul, KR",
+        ))
+        routing_svc.register_cached_node(ProxyNode(
+            node_id="kr-datacenter",
+            endpoint_url="https://10.0.0.2:9090",
+            health_score=1.0,
+            ip_type="datacenter",
+            ip_region="Seoul, KR",
+        ))
+
+        resp = client.get(
+            "/internal/route/select",
+            params={"ip_type": "datacenter", "ip_region": "Seoul"},
+            headers={"X-Internal-API-Key": settings.INTERNAL_API_SECRET},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["node_id"] == "kr-datacenter"
 
 
 class TestRouteReport:

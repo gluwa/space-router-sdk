@@ -39,11 +39,15 @@ class SQLiteClient:
         CREATE TABLE IF NOT EXISTS nodes (
             id TEXT PRIMARY KEY,
             endpoint_url TEXT NOT NULL,
+            public_ip TEXT,
+            connectivity_type TEXT NOT NULL DEFAULT 'direct',
             node_type TEXT NOT NULL DEFAULT 'residential',
             status TEXT NOT NULL DEFAULT 'online',
             health_score REAL NOT NULL DEFAULT 1.0,
             region TEXT,
             label TEXT,
+            ip_type TEXT,
+            ip_region TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )

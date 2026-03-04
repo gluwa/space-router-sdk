@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.db import SupabaseClient
 from app.routers import api_keys, nodes, internal
 from app.services.auth_service import AuthService
+from app.services.ip_info_service import IPInfoService
 from app.services.routing_service import RoutingService
 from app.sqlite_db import SQLiteClient
 
@@ -51,6 +52,7 @@ async def startup_db_client():
     
     # Initialize services
     app.state.auth_service = AuthService(http_client, settings)
+    app.state.ip_info_service = IPInfoService(http_client, settings.IPINFO_TOKEN)
     app.state.routing_service = RoutingService(http_client, settings)
 
 

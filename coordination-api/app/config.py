@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Internal API authentication
     INTERNAL_API_SECRET: str = ""
 
+    # ipinfo.io token for IP classification (optional — free tier works without)
+    IPINFO_TOKEN: str = ""
+
     # Proxyjet fallback proxy (used when no residential nodes available)
     PROXYJET_HOST: str = ""
     PROXYJET_PORT: int = 8080

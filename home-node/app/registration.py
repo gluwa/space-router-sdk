@@ -91,7 +91,12 @@ async def register_node(
     resp.raise_for_status()
     data = resp.json()
     node_id = data["id"]
-    logger.info("Registered as node %s", node_id)
+    ip_type = data.get("ip_type", "unknown")
+    ip_region = data.get("ip_region", "unknown")
+    logger.info(
+        "Registered as node %s (ip_type=%s, ip_region=%s)",
+        node_id, ip_type, ip_region,
+    )
     return node_id
 
 

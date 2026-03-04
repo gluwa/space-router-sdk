@@ -48,6 +48,46 @@ class TestNodeRouter:
         assert result.endpoint_url == "http://127.0.0.1:9090"
 
     @pytest.mark.asyncio
+    async def test_select_node_forwards_ip_type_and_region_as_query_params(self, settings, mock_api):
+        """ip_type and ip_region should be sent as query params to coordination API."""
+        route = mock_api.get("http://coordination.test/internal/route/select").respond(
+            200,
+            json={"node_id": "kr-res", "endpoint_url": "https://10.0.0.1:9090"},
+        )
+
+        async with httpx.AsyncClient() as client:
+            router = NodeRouter(client, settings)
+            result = await router.select_node(ip_type="residential", ip_region="Seoul, KR")
+
+        assert result is not None
+        assert result.node_id == "kr-res"
+
+        # Verify query params were sent
+        req = route.calls[0].request
+        assert "ip_type=residential" in str(req.url)
+        assert "ip_region=" in str(req.url)
+        assert "Seoul" in str(req.url)
+
+    @pytest.mark.asyncio
+    async def test_select_node_omits_query_params_when_none(self, settings, mock_api):
+        """Without filters, no ip_type/ip_region query params should be sent."""
+        route = mock_api.get("http://coordination.test/internal/route/select").respond(
+            200,
+            json={"node_id": "any-node", "endpoint_url": "https://10.0.0.1:9090"},
+        )
+
+        async with httpx.AsyncClient() as client:
+            router = NodeRouter(client, settings)
+            result = await router.select_node()
+
+        assert result is not None
+
+        # Verify no filter query params were sent
+        req = route.calls[0].request
+        assert "ip_type" not in str(req.url)
+        assert "ip_region" not in str(req.url)
+
+    @pytest.mark.asyncio
     async def test_report_outcome(self, settings, mock_api):
         route = mock_api.post("http://coordination.test/internal/route/report").respond(200)
 

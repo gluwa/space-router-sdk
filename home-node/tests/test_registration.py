@@ -163,6 +163,56 @@ class TestRegisterNode:
 
     @pytest.mark.asyncio
     @respx.mock
+    async def test_register_receives_ip_classification(self, reg_settings):
+        """Registration response with ip_type/ip_region should be parsed without error."""
+        respx.post("http://coordination:8000/nodes").mock(
+            return_value=Response(201, json={
+                "id": "node-classified",
+                "endpoint_url": "https://1.2.3.4:9090",
+                "public_ip": "1.2.3.4",
+                "connectivity_type": "direct",
+                "node_type": "residential",
+                "status": "online",
+                "health_score": 1.0,
+                "region": "us-west",
+                "label": "test-node",
+                "ip_type": "residential",
+                "ip_region": "Portland, US",
+                "created_at": "2026-01-01T00:00:00Z",
+            })
+        )
+
+        import httpx
+        async with httpx.AsyncClient() as client:
+            node_id = await register_node(client, reg_settings, "1.2.3.4")
+
+        assert node_id == "node-classified"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_register_handles_missing_ip_classification(self, reg_settings):
+        """Registration response without ip_type/ip_region should default to 'unknown'."""
+        respx.post("http://coordination:8000/nodes").mock(
+            return_value=Response(201, json={
+                "id": "node-no-class",
+                "endpoint_url": "https://1.2.3.4:9090",
+                "node_type": "residential",
+                "status": "online",
+                "health_score": 1.0,
+                "created_at": "2026-01-01T00:00:00Z",
+                # No ip_type or ip_region — code uses .get() with "unknown" default
+            })
+        )
+
+        import httpx
+        async with httpx.AsyncClient() as client:
+            node_id = await register_node(client, reg_settings, "1.2.3.4")
+
+        # Should succeed without KeyError
+        assert node_id == "node-no-class"
+
+    @pytest.mark.asyncio
+    @respx.mock
     async def test_register_failure_raises(self, reg_settings):
         respx.post("http://coordination:8000/nodes").mock(
             return_value=Response(500, text="Internal Server Error")

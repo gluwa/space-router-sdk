@@ -31,8 +31,10 @@ class FakeNodeRouter:
     def __init__(self, node: NodeSelection | None = None):
         self._node = node
         self.reports: list[dict] = []
+        self.last_select_kwargs: dict = {}
 
-    async def select_node(self) -> NodeSelection | None:
+    async def select_node(self, *, ip_type=None, ip_region=None) -> NodeSelection | None:
+        self.last_select_kwargs = {"ip_type": ip_type, "ip_region": ip_region}
         return self._node
 
     def report_outcome(self, node_id, success, latency_ms, bytes_transferred):
@@ -317,6 +319,184 @@ class TestProxyServerHTTPForward:
             await server.wait_closed()
             fake_node.close()
             await fake_node.wait_closed()
+
+
+class TestProxyServerRoutingHeaders:
+    @pytest.mark.asyncio
+    async def test_routing_headers_forwarded_to_select_node(self):
+        """X-SpaceRouter-IP-Type and X-SpaceRouter-Region should be extracted
+        and forwarded to select_node as ip_type/ip_region kwargs."""
+        settings = Settings(
+            PROXY_PORT=0,
+            MANAGEMENT_PORT=0,
+            COORDINATION_API_URL="http://test",
+            COORDINATION_API_SECRET="s",
+        )
+
+        fake_router = FakeNodeRouter(node=None)  # Returns 503, but we check kwargs
+        proxy = ProxyServer(
+            auth_validator=FakeAuthValidator(),
+            node_router=fake_router,
+            rate_limiter=RateLimiter(),
+            request_logger=FakeRequestLogger(),
+            settings=settings,
+        )
+
+        server = await proxy.start()
+        port = server.sockets[0].getsockname()[1]
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            creds = base64.b64encode(b"sr_live_abc123:").decode()
+            writer.write(
+                f"GET http://example.com/ HTTP/1.1\r\n"
+                f"Host: example.com\r\n"
+                f"Proxy-Authorization: Basic {creds}\r\n"
+                f"X-SpaceRouter-IP-Type: residential\r\n"
+                f"X-SpaceRouter-Region: Seoul, KR\r\n"
+                f"\r\n".encode()
+            )
+            await writer.drain()
+
+            response = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+            # Will get 503 because FakeNodeRouter returns None, but that's fine
+            assert b"503" in response
+
+            # Verify the routing headers were extracted and passed to select_node
+            assert fake_router.last_select_kwargs["ip_type"] == "residential"
+            assert fake_router.last_select_kwargs["ip_region"] == "Seoul, KR"
+
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    @pytest.mark.asyncio
+    async def test_routing_headers_stripped_before_forwarding(self):
+        """X-SpaceRouter-IP-Type and X-SpaceRouter-Region should NOT appear
+        in the request forwarded to the home node."""
+        received_headers = {}
+
+        async def fake_node_handler(reader, writer):
+            data = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+            # Parse the forwarded request headers
+            header_section = data.split(b"\r\n\r\n")[0]
+            for line in header_section.split(b"\r\n")[1:]:  # skip request line
+                if b":" in line:
+                    key, _, val = line.partition(b":")
+                    received_headers[key.decode().strip().lower()] = val.decode().strip()
+
+            response = (
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/plain\r\n"
+                b"Content-Length: 2\r\n"
+                b"\r\n"
+                b"OK"
+            )
+            writer.write(response)
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        fake_node = await asyncio.start_server(fake_node_handler, "127.0.0.1", 0)
+        node_port = fake_node.sockets[0].getsockname()[1]
+
+        settings = Settings(
+            PROXY_PORT=0,
+            MANAGEMENT_PORT=0,
+            COORDINATION_API_URL="http://test",
+            COORDINATION_API_SECRET="s",
+        )
+
+        proxy = ProxyServer(
+            auth_validator=FakeAuthValidator(),
+            node_router=FakeNodeRouter(
+                node=NodeSelection(node_id="node-1", endpoint_url=f"http://127.0.0.1:{node_port}")
+            ),
+            rate_limiter=RateLimiter(),
+            request_logger=FakeRequestLogger(),
+            settings=settings,
+        )
+
+        server = await proxy.start()
+        proxy_port = server.sockets[0].getsockname()[1]
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+            creds = base64.b64encode(b"sr_live_abc123:").decode()
+            writer.write(
+                f"GET http://example.com/test HTTP/1.1\r\n"
+                f"Host: example.com\r\n"
+                f"Proxy-Authorization: Basic {creds}\r\n"
+                f"X-SpaceRouter-IP-Type: residential\r\n"
+                f"X-SpaceRouter-Region: Seoul, KR\r\n"
+                f"\r\n".encode()
+            )
+            await writer.drain()
+
+            response = await asyncio.wait_for(reader.read(8192), timeout=5.0)
+            assert b"200 OK" in response
+
+            # Verify routing headers were stripped before forwarding
+            assert "x-spacerouter-ip-type" not in received_headers
+            assert "x-spacerouter-region" not in received_headers
+            # But Host should still be there
+            assert "host" in received_headers
+
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            server.close()
+            await server.wait_closed()
+            fake_node.close()
+            await fake_node.wait_closed()
+
+    @pytest.mark.asyncio
+    async def test_no_routing_headers_passes_none(self):
+        """Without routing headers, select_node gets ip_type=None, ip_region=None."""
+        settings = Settings(
+            PROXY_PORT=0,
+            MANAGEMENT_PORT=0,
+            COORDINATION_API_URL="http://test",
+            COORDINATION_API_SECRET="s",
+        )
+
+        fake_router = FakeNodeRouter(node=None)
+        proxy = ProxyServer(
+            auth_validator=FakeAuthValidator(),
+            node_router=fake_router,
+            rate_limiter=RateLimiter(),
+            request_logger=FakeRequestLogger(),
+            settings=settings,
+        )
+
+        server = await proxy.start()
+        port = server.sockets[0].getsockname()[1]
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            creds = base64.b64encode(b"sr_live_abc123:").decode()
+            writer.write(
+                f"GET http://example.com/ HTTP/1.1\r\n"
+                f"Host: example.com\r\n"
+                f"Proxy-Authorization: Basic {creds}\r\n"
+                f"\r\n".encode()
+            )
+            await writer.drain()
+
+            response = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+            assert b"503" in response
+
+            # Without routing headers, both should be None
+            assert fake_router.last_select_kwargs["ip_type"] is None
+            assert fake_router.last_select_kwargs["ip_region"] is None
+
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            server.close()
+            await server.wait_closed()
 
 
 class TestProxyServerCONNECT:

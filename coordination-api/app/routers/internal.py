@@ -8,7 +8,7 @@ These are the three endpoints that make up the proxy-gateway ↔ coordination-ap
 
 import logging
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
 
 from app.dependencies import verify_internal_secret
@@ -56,9 +56,14 @@ class RouteSelectResponse(BaseModel):
 
 
 @router.get("/internal/route/select")
-async def select_route(request: Request, response: Response) -> RouteSelectResponse:
+async def select_route(
+    request: Request,
+    response: Response,
+    ip_type: str | None = Query(None, description="Filter by IP type (residential, mobile, datacenter)"),
+    ip_region: str | None = Query(None, description="Filter by IP region (e.g. Seoul, KR)"),
+) -> RouteSelectResponse:
     routing_service: RoutingService = request.app.state.routing_service
-    node = await routing_service.select_node()
+    node = await routing_service.select_node(ip_type=ip_type, ip_region=ip_region)
     if node is None:
         response.status_code = 503
         return RouteSelectResponse(node_id="", endpoint_url="")

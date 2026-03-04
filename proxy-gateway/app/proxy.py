@@ -263,9 +263,11 @@ async def handle_http_forward(
     try:
         # Build request to forward to home node (or upstream proxy)
         # Remove client's proxy-specific headers, keep the rest
+        _strip = ("proxy-authorization", "proxy-connection",
+                  "x-spacerouter-ip-type", "x-spacerouter-region")
         forward_headers = {
             k: v for k, v in headers.items()
-            if k.lower() not in ("proxy-authorization", "proxy-connection")
+            if k.lower() not in _strip
         }
         forward_headers["X-SpaceRouter-Request-Id"] = request_id
         # Add upstream proxy auth if the node endpoint has credentials
@@ -473,8 +475,15 @@ class ProxyServer:
                 await writer.drain()
                 return
 
+            # --- Extract routing preferences ---
+            requested_ip_type = headers.get("X-SpaceRouter-IP-Type", "")
+            requested_region = headers.get("X-SpaceRouter-Region", "")
+
             # --- Node Selection ---
-            node = await self.node_router.select_node()
+            node = await self.node_router.select_node(
+                ip_type=requested_ip_type or None,
+                ip_region=requested_region or None,
+            )
             if node is None:
                 metrics["no_nodes"] += 1
                 writer.write(no_nodes_available(request_id))

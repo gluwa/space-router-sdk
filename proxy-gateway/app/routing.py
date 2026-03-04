@@ -27,15 +27,31 @@ class NodeRouter:
         self._client = http_client
         self._settings = settings
 
-    async def select_node(self) -> Optional[NodeSelection]:
-        """Select the best available node for routing traffic."""
+    async def select_node(
+        self,
+        *,
+        ip_type: Optional[str] = None,
+        ip_region: Optional[str] = None,
+    ) -> Optional[NodeSelection]:
+        """Select the best available node for routing traffic.
+
+        Optional *ip_type* and *ip_region* filters are forwarded to the
+        Coordination API so it only considers matching nodes.
+        """
         try:
             # For SQLite testing, add the API key header
             headers = {"X-Internal-API-Key": "test_secret"}
-            
+
+            params: dict[str, str] = {}
+            if ip_type:
+                params["ip_type"] = ip_type
+            if ip_region:
+                params["ip_region"] = ip_region
+
             response = await self._client.get(
                 f"{self._settings.COORDINATION_API_URL}/internal/route/select",
                 headers=headers,
+                params=params,
                 timeout=5.0,
             )
             if response.status_code == 503:
