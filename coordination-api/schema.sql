@@ -12,6 +12,7 @@ CREATE TABLE api_keys (
     key_prefix TEXT NOT NULL,
     rate_limit_rpm INTEGER NOT NULL DEFAULT 60,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by_ip TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

@@ -101,7 +101,7 @@ header "Configuring environment"
 cat > "$COORD_DIR/.env" << 'EOF'
 SR_USE_SQLITE=true
 SR_SQLITE_DB_PATH=space_router.db
-SR_INTERNAL_API_SECRET=
+SR_INTERNAL_API_SECRET=test_secret
 SR_LOG_LEVEL=INFO
 EOF
 
