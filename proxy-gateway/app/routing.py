@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Optional
 
 import httpx
 
@@ -29,42 +29,32 @@ class NodeRouter:
 
     async def select_node(
         self,
-        *,
-        ip_type: Optional[str] = None,
-        ip_region: Optional[str] = None,
+        region: str | None = None,
+        node_type: str | None = None,
     ) -> Optional[NodeSelection]:
-        """Select the best available node for routing traffic.
-
-        Optional *ip_type* and *ip_region* filters are forwarded to the
-        Coordination API so it only considers matching nodes.
+        """Select the best available node, forwarding routing hints to the
+        coordination API so it can filter home nodes and fall back to Bright
+        Data when no match is found.
         """
+        params: dict[str, str] = {}
+        if region:
+            params["region"] = region
+        if node_type:
+            params["node_type"] = node_type
+
         try:
-            headers = {"X-Internal-API-Key": self._settings.COORDINATION_API_SECRET}
-
-            params: dict[str, str] = {}
-            if ip_type:
-                params["ip_type"] = ip_type
-            if ip_region:
-                params["ip_region"] = ip_region
-
-
             response = await self._client.get(
                 f"{self._settings.COORDINATION_API_URL}/internal/route/select",
-                headers=headers,
+                headers={"X-Internal-API-Key": self._settings.COORDINATION_API_SECRET},
                 params=params,
                 timeout=5.0,
             )
             if response.status_code == 503:
                 return None
-            elif response.status_code != 200:
-                logger.error(f"Unexpected response from route/select: {response.status_code}")
-                # For SQLite testing, create a local test node
-                if hasattr(self._settings, "USE_SQLITE") and self._settings.USE_SQLITE:
-                    logger.info("Using local test node for SQLite testing")
-                    return NodeSelection(
-                        node_id="local-test-node-id", 
-                        endpoint_url="http://127.0.0.1:9090"
-                    )
+            if response.status_code != 200:
+                logger.error(
+                    "Unexpected status from route/select: %d", response.status_code
+                )
                 return None
 
             data = response.json()
@@ -73,30 +63,29 @@ class NodeRouter:
                 endpoint_url=data["endpoint_url"],
             )
         except httpx.RequestError:
-            logger.exception("Failed to select node")
-            # For SQLite testing, create a local test node
-            if hasattr(self._settings, "USE_SQLITE") and self._settings.USE_SQLITE:
-                logger.info("Using local test node for SQLite testing")
-                return NodeSelection(
-                    node_id="local-test-node-id", 
-                    endpoint_url="http://127.0.0.1:9090"
-                )
+            logger.exception("Failed to reach coordination API for node selection")
             return None
 
-    def report_outcome(self, node_id: str, success: bool, latency_ms: int, bytes_transferred: int) -> None:
-        """Report the outcome of a routing decision to update node health scores."""
-        async def _do_report():
+    def report_outcome(
+        self,
+        node_id: str,
+        success: bool,
+        latency_ms: int,
+        bytes_transferred: int,
+    ) -> None:
+        """Fire-and-forget outcome report to update node health scores."""
+
+        async def _do_report() -> None:
             try:
-                headers = {"X-Internal-API-Key": self._settings.COORDINATION_API_SECRET}
                 await self._client.post(
                     f"{self._settings.COORDINATION_API_URL}/internal/route/report",
+                    headers={"X-Internal-API-Key": self._settings.COORDINATION_API_SECRET},
                     json={
                         "node_id": node_id,
                         "success": success,
                         "latency_ms": latency_ms,
                         "bytes": bytes_transferred,
                     },
-                    headers=headers,
                     timeout=5.0,
                 )
             except Exception:

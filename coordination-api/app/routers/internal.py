@@ -7,6 +7,7 @@ These are the three endpoints that make up the proxy-gateway ↔ coordination-ap
 """
 
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
@@ -17,7 +18,6 @@ from app.services.routing_service import RoutingService
 
 logger = logging.getLogger(__name__)
 
-# Remove the prefix from the router to fix 404 issues
 router = APIRouter(dependencies=[Depends(verify_internal_secret)])
 
 
@@ -59,11 +59,16 @@ class RouteSelectResponse(BaseModel):
 async def select_route(
     request: Request,
     response: Response,
-    ip_type: str | None = Query(None, description="Filter by IP type (residential, mobile, datacenter)"),
-    ip_region: str | None = Query(None, description="Filter by IP region (e.g. Seoul, KR)"),
+    region: Optional[str] = Query(default=None, description="Preferred region, e.g. 'us-west'"),
+    node_type: Optional[str] = Query(default=None, description="Preferred node type, e.g. 'residential'"),
 ) -> RouteSelectResponse:
+    """Select the best available node for the given routing hints.
+
+    Falls back to Bright Data when no matching home node is available.
+    Returns 503 only if Bright Data is also unconfigured.
+    """
     routing_service: RoutingService = request.app.state.routing_service
-    node = await routing_service.select_node(ip_type=ip_type, ip_region=ip_region)
+    node = await routing_service.select_node(region=region, node_type=node_type)
     if node is None:
         response.status_code = 503
         return RouteSelectResponse(node_id="", endpoint_url="")
