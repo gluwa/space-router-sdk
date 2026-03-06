@@ -138,7 +138,9 @@ def _extract_proxy_auth(parsed_url) -> str | None:
     return None
 
 
-async def _connect_to_node(endpoint_url: str, timeout: float) -> NodeConnection | None:
+async def _connect_to_node(
+    endpoint_url: str, timeout: float, tls_verify: bool = True
+) -> NodeConnection | None:
     parsed = urlparse(endpoint_url)
     host = parsed.hostname
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
@@ -148,6 +150,9 @@ async def _connect_to_node(endpoint_url: str, timeout: float) -> NodeConnection 
         if parsed.scheme == "https":
             import ssl
             ctx = ssl.create_default_context()
+            if not tls_verify:
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port, ssl=ctx),
                 timeout=timeout,
@@ -158,8 +163,8 @@ async def _connect_to_node(endpoint_url: str, timeout: float) -> NodeConnection 
                 timeout=timeout,
             )
         return NodeConnection(reader=reader, writer=writer, proxy_auth=proxy_auth)
-    except (OSError, asyncio.TimeoutError) as e:
-        logger.warning("Failed to connect to node %s: %s", endpoint_url, e)
+    except Exception as e:
+        logger.warning("Failed to connect to node %s: %s: %s", endpoint_url, type(e).__name__, e)
         return None
 
 
@@ -172,7 +177,9 @@ async def handle_connect(
     request_id: str,
     settings: Settings,
 ) -> tuple[bool, int, int, str | None]:
-    conn = await _connect_to_node(node.endpoint_url, settings.NODE_REQUEST_TIMEOUT)
+    conn = await _connect_to_node(
+        node.endpoint_url, settings.NODE_REQUEST_TIMEOUT, settings.NODE_TLS_VERIFY
+    )
     if conn is None:
         return False, 0, 0, "connection_refused"
 
@@ -250,7 +257,9 @@ async def handle_http_forward(
     request_id: str,
     settings: Settings,
 ) -> tuple[bool, int, int, int | None, str | None]:
-    conn = await _connect_to_node(node.endpoint_url, settings.NODE_REQUEST_TIMEOUT)
+    conn = await _connect_to_node(
+        node.endpoint_url, settings.NODE_REQUEST_TIMEOUT, settings.NODE_TLS_VERIFY
+    )
     if conn is None:
         return False, 0, 0, None, "connection_refused"
 

@@ -51,7 +51,7 @@ async def startup_db_client():
     
     # Initialize services
     app.state.auth_service = AuthService(http_client, settings)
-    app.state.routing_service = RoutingService(http_client, settings)
+    app.state.routing_service = RoutingService(http_client, settings, db=app.state.db)
 
 
 @app.get("/healthz")

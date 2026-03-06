@@ -24,10 +24,11 @@ class ProxyNode:
 class RoutingService:
     """Selects optimal nodes for routing traffic."""
 
-    def __init__(self, http_client: httpx.AsyncClient, settings: Settings) -> None:
+    def __init__(self, http_client: httpx.AsyncClient, settings: Settings, db=None) -> None:
         self._client = http_client
         self._settings = settings
-        
+        self._db = db
+
         # Local cache of nodes for SQLite implementation
         self._nodes_cache: Dict[str, ProxyNode] = {}
         self._node_health: Dict[str, float] = {}
@@ -42,24 +43,32 @@ class RoutingService:
         return self._get_fallback_node()
 
     async def _select_node_sqlite(self) -> Optional[ProxyNode]:
-        """Select a node using SQLite data."""
-        # For testing, we'll use the first available node or a local node
-        # In a real implementation, this would make a weighted random choice
-        
-        # If we have cached nodes, return one randomly
+        """Select a node from the SQLite database."""
+        # Query online nodes from the database
+        if self._db is not None:
+            rows = await self._db.select(
+                "nodes", params={"status": "online"}
+            )
+            if rows:
+                candidates = [
+                    ProxyNode(
+                        node_id=r["id"],
+                        endpoint_url=r["endpoint_url"],
+                        health_score=r.get("health_score", 1.0),
+                    )
+                    for r in rows
+                ]
+                if candidates:
+                    weights = [max(c.health_score, 0.01) for c in candidates]
+                    return random.choices(candidates, weights=weights, k=1)[0]
+
+        # Fall back to in-memory cache
         if self._nodes_cache:
-            node_ids = list(self._nodes_cache.keys())
-            selected_id = random.choice(node_ids)
-            return self._nodes_cache[selected_id]
-            
-        # For testing, create a mock local node
-        node = ProxyNode(
-            node_id="local-test-node-id",
-            endpoint_url="http://127.0.0.1:9090",
-            health_score=1.0
-        )
-        self._nodes_cache[node.node_id] = node
-        return node
+            candidates = list(self._nodes_cache.values())
+            weights = [max(c.health_score, 0.01) for c in candidates]
+            return random.choices(candidates, weights=weights, k=1)[0]
+
+        return None
 
     def _get_fallback_node(self) -> Optional[ProxyNode]:
         """Get a fallback proxy provider when no residential nodes are available."""
