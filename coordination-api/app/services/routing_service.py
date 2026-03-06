@@ -58,9 +58,10 @@ class ProxyNode:
 class RoutingService:
     """Selects optimal nodes for routing traffic."""
 
-    def __init__(self, http_client: httpx.AsyncClient, settings: Settings) -> None:
+    def __init__(self, http_client: httpx.AsyncClient, settings: Settings, db=None) -> None:
         self._client = http_client
         self._settings = settings
+        self._db = db
 
         # Local cache of nodes for SQLite implementation
         self._nodes_cache: Dict[str, ProxyNode] = {}
@@ -92,28 +93,43 @@ class RoutingService:
         region: str | None = None,
         node_type: str | None = None,
     ) -> Optional[ProxyNode]:
-        """Select a node using the in-memory SQLite cache."""
-        candidates = list(self._nodes_cache.values())
+        """Select a node from the SQLite database."""
+        # Query online nodes from the database
+        if self._db is not None:
+            rows = await self._db.select(
+                "nodes", params={"status": "online"}
+            )
+            if rows:
+                candidates = [
+                    ProxyNode(
+                        node_id=r["id"],
+                        endpoint_url=r["endpoint_url"],
+                        health_score=r.get("health_score", 1.0),
+                    )
+                    for r in rows
+                ]
 
-        # Filter by region and type if requested
+                if region:
+                    candidates = [n for n in candidates if _node_matches_region(n, region)]
+                if node_type:
+                    candidates = [n for n in candidates if _node_matches_type(n, node_type)]
+
+                if candidates:
+                    weights = [max(c.health_score, 0.01) for c in candidates]
+                    return random.choices(candidates, weights=weights, k=1)[0]
+
+        # Fall back to in-memory cache
+        candidates = list(self._nodes_cache.values())
         if region:
             candidates = [n for n in candidates if _node_matches_region(n, region)]
         if node_type:
             candidates = [n for n in candidates if _node_matches_type(n, node_type)]
 
         if candidates:
-            # Weighted random selection by health score
             weights = [max(c.health_score, 0.01) for c in candidates]
             return random.choices(candidates, weights=weights, k=1)[0]
 
-        # No cached nodes match — seed a local test node for development
-        node = ProxyNode(
-            node_id="local-test-node-id",
-            endpoint_url="http://127.0.0.1:9090",
-            health_score=1.0,
-        )
-        self._nodes_cache[node.node_id] = node
-        return node
+        return None
 
     async def _select_node_supabase(
         self,

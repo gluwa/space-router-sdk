@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     NODE_REQUEST_TIMEOUT: float = 30.0
     AUTH_CACHE_TTL: int = 300  # 5 minutes
 
+    # TLS
+    NODE_TLS_VERIFY: bool = True  # Set False for self-signed Home Node certs
+
     # Logging
     LOG_LEVEL: str = "INFO"
     
