@@ -10,6 +10,7 @@ from app.config import settings
 from app.logger import RequestLogger
 from app.management import management_app
 from app.proxy import ProxyServer
+from app.socks5 import Socks5Server
 from app.rate_limiter import RateLimiter
 from app.routing import NodeRouter
 
@@ -48,6 +49,16 @@ async def main() -> None:
         )
         proxy_server = await proxy.start()
 
+        # Start SOCKS5 server
+        socks5 = Socks5Server(
+            auth_validator=auth_validator,
+            node_router=node_router,
+            rate_limiter=rate_limiter,
+            request_logger=request_logger,
+            settings=settings,
+        )
+        socks5_server = await socks5.start()
+
         # Start management server
         uvicorn_config = uvicorn.Config(
             management_app,
@@ -58,8 +69,9 @@ async def main() -> None:
         uvicorn_server = uvicorn.Server(uvicorn_config)
 
         logger.info(
-            "Space Router Proxy Gateway started — proxy:%d management:%d",
+            "Space Router Proxy Gateway started — proxy:%d socks5:%d management:%d",
             settings.PROXY_PORT,
+            settings.SOCKS5_PORT,
             settings.MANAGEMENT_PORT,
         )
 
@@ -71,6 +83,8 @@ async def main() -> None:
         logger.info("Shutting down...")
         proxy_server.close()
         await proxy_server.wait_closed()
+        socks5_server.close()
+        await socks5_server.wait_closed()
         uvicorn_server.should_exit = True
         await uvicorn_task
         await rate_limiter.stop()
