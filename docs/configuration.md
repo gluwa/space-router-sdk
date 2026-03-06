@@ -6,7 +6,8 @@ All settings are via environment variables with the `SR_` prefix.
 
 | Variable | Default | Description |
 |---|---|---|
-| `SR_PROXY_PORT` | 8080 | Port for the proxy server |
+| `SR_PROXY_PORT` | 8080 | Port for the HTTP proxy server |
+| `SR_SOCKS5_PORT` | 1080 | Port for the SOCKS5 proxy server |
 | `SR_MANAGEMENT_PORT` | 8081 | Port for health/metrics API |
 | `SR_COORDINATION_API_URL` | — | Coordination API base URL |
 | `SR_COORDINATION_API_SECRET` | — | Shared secret for internal API auth |

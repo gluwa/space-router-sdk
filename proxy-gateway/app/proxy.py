@@ -31,6 +31,11 @@ metrics = {
     "upstream_errors": 0,
     "no_nodes": 0,
     "successful_requests": 0,
+    # SOCKS5
+    "socks5_total_requests": 0,
+    "socks5_active_connections": 0,
+    "socks5_auth_failures": 0,
+    "socks5_successful_requests": 0,
 }
 
 

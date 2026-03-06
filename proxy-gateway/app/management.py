@@ -47,4 +47,8 @@ async def get_metrics() -> dict:
         "rate_limited": metrics["rate_limited"],
         "upstream_errors": metrics["upstream_errors"],
         "no_nodes": metrics["no_nodes"],
+        "socks5_total_requests": metrics["socks5_total_requests"],
+        "socks5_active_connections": metrics["socks5_active_connections"],
+        "socks5_auth_failures": metrics["socks5_auth_failures"],
+        "socks5_successful_requests": metrics["socks5_successful_requests"],
     }

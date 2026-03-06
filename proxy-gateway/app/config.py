@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     # Ports
     PROXY_PORT: int = 8080
+    SOCKS5_PORT: int = 1080
     MANAGEMENT_PORT: int = 8081
 
     # Coordination API
