@@ -14,8 +14,9 @@ def settings(tmp_path):
         INTERNAL_API_SECRET="test-secret",
         USE_SQLITE=True,
         SQLITE_DB_PATH=db_path,
-        PROXYJET_HOST="proxy.proxyjet.io",
-        PROXYJET_PORT=1010,
-        PROXYJET_USERNAME="user123",
-        PROXYJET_PASSWORD="pass456",
+        BRIGHTDATA_ACCOUNT_ID="C12345",
+        BRIGHTDATA_ZONE="residential",
+        BRIGHTDATA_PASSWORD="brightpass",
+        BRIGHTDATA_HOST="brd.superproxy.io",
+        BRIGHTDATA_PORT=33335,
     )

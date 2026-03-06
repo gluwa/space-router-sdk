@@ -45,7 +45,7 @@ class FakeNodeRouter:
         self._node = node
         self.reports: list[dict] = []
 
-    async def select_node(self, *, ip_type=None, ip_region=None) -> NodeSelection | None:
+    async def select_node(self, *, region=None, node_type=None) -> NodeSelection | None:
         return self._node
 
     def report_outcome(self, node_id, success, latency_ms, bytes_transferred):

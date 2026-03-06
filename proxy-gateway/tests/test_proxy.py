@@ -33,8 +33,8 @@ class FakeNodeRouter:
         self.reports: list[dict] = []
         self.last_select_kwargs: dict = {}
 
-    async def select_node(self, *, ip_type=None, ip_region=None) -> NodeSelection | None:
-        self.last_select_kwargs = {"ip_type": ip_type, "ip_region": ip_region}
+    async def select_node(self, *, region=None, node_type=None) -> NodeSelection | None:
+        self.last_select_kwargs = {"region": region, "node_type": node_type}
         return self._node
 
     def report_outcome(self, node_id, success, latency_ms, bytes_transferred):
@@ -324,8 +324,8 @@ class TestProxyServerHTTPForward:
 class TestProxyServerRoutingHeaders:
     @pytest.mark.asyncio
     async def test_routing_headers_forwarded_to_select_node(self):
-        """X-SpaceRouter-IP-Type and X-SpaceRouter-Region should be extracted
-        and forwarded to select_node as ip_type/ip_region kwargs."""
+        """X-SpaceRouter-Region and X-SpaceRouter-Type should be extracted
+        and forwarded to select_node as region/node_type kwargs."""
         settings = Settings(
             PROXY_PORT=0,
             MANAGEMENT_PORT=0,
@@ -352,8 +352,8 @@ class TestProxyServerRoutingHeaders:
                 f"GET http://example.com/ HTTP/1.1\r\n"
                 f"Host: example.com\r\n"
                 f"Proxy-Authorization: Basic {creds}\r\n"
-                f"X-SpaceRouter-IP-Type: residential\r\n"
-                f"X-SpaceRouter-Region: Seoul, KR\r\n"
+                f"X-SpaceRouter-Type: residential\r\n"
+                f"X-SpaceRouter-Region: us-west\r\n"
                 f"\r\n".encode()
             )
             await writer.drain()
@@ -363,8 +363,8 @@ class TestProxyServerRoutingHeaders:
             assert b"503" in response
 
             # Verify the routing headers were extracted and passed to select_node
-            assert fake_router.last_select_kwargs["ip_type"] == "residential"
-            assert fake_router.last_select_kwargs["ip_region"] == "Seoul, KR"
+            assert fake_router.last_select_kwargs["node_type"] == "residential"
+            assert fake_router.last_select_kwargs["region"] == "us-west"
 
             writer.close()
             await writer.wait_closed()
@@ -374,7 +374,7 @@ class TestProxyServerRoutingHeaders:
 
     @pytest.mark.asyncio
     async def test_routing_headers_stripped_before_forwarding(self):
-        """X-SpaceRouter-IP-Type and X-SpaceRouter-Region should NOT appear
+        """X-SpaceRouter-Region and X-SpaceRouter-Type should NOT appear
         in the request forwarded to the home node."""
         received_headers = {}
 
@@ -429,8 +429,8 @@ class TestProxyServerRoutingHeaders:
                 f"GET http://example.com/test HTTP/1.1\r\n"
                 f"Host: example.com\r\n"
                 f"Proxy-Authorization: Basic {creds}\r\n"
-                f"X-SpaceRouter-IP-Type: residential\r\n"
-                f"X-SpaceRouter-Region: Seoul, KR\r\n"
+                f"X-SpaceRouter-Type: residential\r\n"
+                f"X-SpaceRouter-Region: us-west\r\n"
                 f"\r\n".encode()
             )
             await writer.drain()
@@ -439,7 +439,7 @@ class TestProxyServerRoutingHeaders:
             assert b"200 OK" in response
 
             # Verify routing headers were stripped before forwarding
-            assert "x-spacerouter-ip-type" not in received_headers
+            assert "x-spacerouter-type" not in received_headers
             assert "x-spacerouter-region" not in received_headers
             # But Host should still be there
             assert "host" in received_headers
@@ -454,7 +454,7 @@ class TestProxyServerRoutingHeaders:
 
     @pytest.mark.asyncio
     async def test_no_routing_headers_passes_none(self):
-        """Without routing headers, select_node gets ip_type=None, ip_region=None."""
+        """Without routing headers, select_node gets region=None, node_type=None."""
         settings = Settings(
             PROXY_PORT=0,
             MANAGEMENT_PORT=0,
@@ -489,8 +489,8 @@ class TestProxyServerRoutingHeaders:
             assert b"503" in response
 
             # Without routing headers, both should be None
-            assert fake_router.last_select_kwargs["ip_type"] is None
-            assert fake_router.last_select_kwargs["ip_region"] is None
+            assert fake_router.last_select_kwargs["region"] is None
+            assert fake_router.last_select_kwargs["node_type"] is None
 
             writer.close()
             await writer.wait_closed()

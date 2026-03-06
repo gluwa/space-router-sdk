@@ -32,9 +32,8 @@ class TestNodeRouter:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_select_node_network_error_sqlite_fallback(self, settings, mock_api):
-        """In SQLite mode, network errors fall back to a local test node."""
-        settings.USE_SQLITE = True
+    async def test_select_node_network_error_returns_none(self, settings, mock_api):
+        """Network errors return None (no local fallback in gateway)."""
         mock_api.get("http://coordination.test/internal/route/select").mock(
             side_effect=httpx.ConnectError("Connection refused")
         )
@@ -43,35 +42,31 @@ class TestNodeRouter:
             router = NodeRouter(client, settings)
             result = await router.select_node()
 
-        # SQLite mode provides a fallback node
-        assert result is not None
-        assert result.node_id == "local-test-node-id"
-        assert result.endpoint_url == "http://127.0.0.1:9090"
+        assert result is None
 
     @pytest.mark.asyncio
-    async def test_select_node_forwards_ip_type_and_region_as_query_params(self, settings, mock_api):
-        """ip_type and ip_region should be sent as query params to coordination API."""
+    async def test_select_node_forwards_region_and_node_type_as_query_params(self, settings, mock_api):
+        """region and node_type should be sent as query params to coordination API."""
         route = mock_api.get("http://coordination.test/internal/route/select").respond(
             200,
-            json={"node_id": "kr-res", "endpoint_url": "https://10.0.0.1:9090"},
+            json={"node_id": "us-res", "endpoint_url": "https://10.0.0.1:9090"},
         )
 
         async with httpx.AsyncClient() as client:
             router = NodeRouter(client, settings)
-            result = await router.select_node(ip_type="residential", ip_region="Seoul, KR")
+            result = await router.select_node(region="us-west", node_type="residential")
 
         assert result is not None
-        assert result.node_id == "kr-res"
+        assert result.node_id == "us-res"
 
         # Verify query params were sent
         req = route.calls[0].request
-        assert "ip_type=residential" in str(req.url)
-        assert "ip_region=" in str(req.url)
-        assert "Seoul" in str(req.url)
+        assert "region=us-west" in str(req.url)
+        assert "node_type=residential" in str(req.url)
 
     @pytest.mark.asyncio
     async def test_select_node_omits_query_params_when_none(self, settings, mock_api):
-        """Without filters, no ip_type/ip_region query params should be sent."""
+        """Without filters, no region/node_type query params should be sent."""
         route = mock_api.get("http://coordination.test/internal/route/select").respond(
             200,
             json={"node_id": "any-node", "endpoint_url": "https://10.0.0.1:9090"},
@@ -85,8 +80,8 @@ class TestNodeRouter:
 
         # Verify no filter query params were sent
         req = route.calls[0].request
-        assert "ip_type" not in str(req.url)
-        assert "ip_region" not in str(req.url)
+        assert "region" not in str(req.url)
+        assert "node_type" not in str(req.url)
 
     @pytest.mark.asyncio
     async def test_report_outcome(self, settings, mock_api):
