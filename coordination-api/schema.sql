@@ -31,6 +31,7 @@ CREATE TABLE nodes (
     label TEXT,
     ip_type TEXT,
     ip_region TEXT,
+    evm_address TEXT UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

@@ -6,7 +6,7 @@ import httpx
 
 from app.config import get_settings
 from app.db import SupabaseClient
-from app.routers import api_keys, nodes, internal
+from app.routers import api_keys, nodes, internal, registration
 from app.services.auth_service import AuthService
 from app.services.ip_info_service import IPInfoService
 from app.services.routing_service import RoutingService
@@ -32,6 +32,7 @@ app.add_middleware(
 app.include_router(api_keys.router)
 app.include_router(nodes.router)
 app.include_router(internal.router)
+app.include_router(registration.router)
 
 @app.on_event("startup")
 async def startup_db_client():

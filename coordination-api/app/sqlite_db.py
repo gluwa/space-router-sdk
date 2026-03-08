@@ -49,6 +49,7 @@ class SQLiteClient:
             label TEXT,
             ip_type TEXT,
             ip_region TEXT,
+            evm_address TEXT UNIQUE,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -87,6 +88,14 @@ class SQLiteClient:
         ''')
 
         conn.commit()
+
+        # Migrate: add evm_address if not present
+        try:
+            cursor.execute("ALTER TABLE nodes ADD COLUMN evm_address TEXT UNIQUE")
+            conn.commit()
+        except Exception:
+            pass  # column already exists
+
         conn.close()
         logger.info(f"SQLite database set up at {self.db_path}")
 
