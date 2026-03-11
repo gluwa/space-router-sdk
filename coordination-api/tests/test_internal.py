@@ -24,7 +24,7 @@ def _setup_app(settings: Settings) -> TestClient:
     app.state.db = db
     app.state.auth_service = AuthService(http_client, settings, db)
     app.state.ip_info_service = IPInfoService(http_client, settings.IPINFO_TOKEN)
-    app.state.routing_service = RoutingService(http_client, settings)
+    app.state.routing_service = RoutingService(http_client, settings, db)
 
     # Override cached settings so verify_internal_secret uses our test settings
     get_settings.cache_clear()
@@ -118,8 +118,8 @@ class TestAuthValidate:
 
 
 class TestRouteSelect:
-    def test_selects_local_test_node(self, settings):
-        """SQLite mode with empty cache seeds a local test node."""
+    def test_falls_back_to_brightdata_when_no_home_nodes(self, settings):
+        """Empty nodes table + Bright Data configured -> brightdata-fallback."""
         client = _setup_app(settings)
 
         resp = client.get(
@@ -128,8 +128,8 @@ class TestRouteSelect:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["node_id"] == "local-test-node-id"
-        assert data["endpoint_url"] == "http://127.0.0.1:9090"
+        assert data["node_id"] == "brightdata-fallback"
+        assert "brd-customer-C12345-zone-residential" in data["endpoint_url"]
 
     def test_no_nodes_no_brightdata(self):
         """No Bright Data configured -> 503."""
@@ -164,7 +164,7 @@ class TestRouteSelect:
         assert resp.status_code == 503
 
     def test_select_with_region_and_node_type(self, settings):
-        """GET /internal/route/select?region=us-west&node_type=residential returns 200."""
+        """GET /internal/route/select?region=us-west -> Bright Data with geo-targeting."""
         client = _setup_app(settings)
 
         resp = client.get(
@@ -174,8 +174,8 @@ class TestRouteSelect:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["node_id"] != ""
-        assert data["endpoint_url"] != ""
+        assert data["node_id"] == "brightdata-fallback"
+        assert "-country-us" in data["endpoint_url"]
 
 
 class TestRouteReport:

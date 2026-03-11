@@ -125,7 +125,7 @@ class TestProxyJetHTTPForward:
         )
         fake_logger = FakeRequestLogger()
         fake_router = FakeNodeRouter(
-            node=NodeSelection(node_id="proxyjet-fallback", endpoint_url=endpoint_url)
+            node=NodeSelection(node_id="brightdata-fallback", endpoint_url=endpoint_url)
         )
 
         proxy = ProxyServer(
@@ -156,7 +156,7 @@ class TestProxyJetHTTPForward:
             # Verify response came back through the pipeline
             assert "200 OK" in response_str
             assert "203.0.113.42" in response_str
-            assert "X-SpaceRouter-Node: proxyjet-fallback" in response_str
+            assert "X-SpaceRouter-Node: brightdata-fallback" in response_str
             assert "X-SpaceRouter-Request-Id:" in response_str
 
             writer.close()
@@ -179,11 +179,11 @@ class TestProxyJetHTTPForward:
             await asyncio.sleep(0.1)
             assert len(fake_logger.logs) == 1
             assert fake_logger.logs[0].success is True
-            assert fake_logger.logs[0].node_id == "proxyjet-fallback"
+            assert fake_logger.logs[0].node_id == "brightdata-fallback"
 
             # Verify outcome was reported
             assert len(fake_router.reports) == 1
-            assert fake_router.reports[0]["node_id"] == "proxyjet-fallback"
+            assert fake_router.reports[0]["node_id"] == "brightdata-fallback"
             assert fake_router.reports[0]["success"] is True
 
         finally:
@@ -250,7 +250,7 @@ class TestProxyJetCONNECT:
             COORDINATION_API_SECRET="s",
         )
         fake_router = FakeNodeRouter(
-            node=NodeSelection(node_id="proxyjet-fallback", endpoint_url=endpoint_url)
+            node=NodeSelection(node_id="brightdata-fallback", endpoint_url=endpoint_url)
         )
 
         proxy = ProxyServer(
@@ -279,7 +279,7 @@ class TestProxyJetCONNECT:
             response = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5.0)
             response_str = response.decode("latin-1")
             assert "200 Connection Established" in response_str
-            assert "X-SpaceRouter-Node: proxyjet-fallback" in response_str
+            assert "X-SpaceRouter-Node: brightdata-fallback" in response_str
 
             # Send data through the tunnel and verify echo
             writer.write(b"TLS CLIENT HELLO (simulated)")
@@ -340,7 +340,7 @@ class TestProxyJetCONNECT:
         proxy = ProxyServer(
             auth_validator=FakeAuthValidator(),
             node_router=FakeNodeRouter(
-                node=NodeSelection(node_id="proxyjet-fallback", endpoint_url=endpoint_url)
+                node=NodeSelection(node_id="brightdata-fallback", endpoint_url=endpoint_url)
             ),
             rate_limiter=RateLimiter(),
             request_logger=FakeRequestLogger(),
@@ -423,7 +423,7 @@ class TestProxyJetNodeSelection:
 
     @pytest.mark.asyncio
     async def test_proxyjet_fallback_node_id_in_response_headers(self):
-        """X-SpaceRouter-Node should show 'proxyjet-fallback' when fallback is used."""
+        """X-SpaceRouter-Node should show 'brightdata-fallback' when fallback is used."""
         async def fake_handler(reader, writer):
             # Read full request headers (until blank line)
             data = b""
@@ -456,7 +456,7 @@ class TestProxyJetNodeSelection:
             auth_validator=FakeAuthValidator(),
             node_router=FakeNodeRouter(
                 node=NodeSelection(
-                    node_id="proxyjet-fallback",
+                    node_id="brightdata-fallback",
                     endpoint_url=f"http://127.0.0.1:{port}",
                 )
             ),
@@ -493,7 +493,7 @@ class TestProxyJetNodeSelection:
             response_str = response.decode("latin-1")
 
             assert "200 OK" in response_str
-            assert "X-SpaceRouter-Node: proxyjet-fallback" in response_str
+            assert "X-SpaceRouter-Node: brightdata-fallback" in response_str
 
             writer.close()
             await writer.wait_closed()

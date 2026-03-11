@@ -1,5 +1,7 @@
 """Tests for the routing service (Bright Data fallback and node selection)."""
 
+import os
+
 import httpx
 import pytest
 
@@ -154,8 +156,8 @@ class TestGetBrightdataFallback:
 
 class TestSelectNode:
     @pytest.mark.asyncio
-    async def test_returns_local_test_node_when_cache_empty(self):
-        """SQLite mode with empty cache seeds a local test node."""
+    async def test_returns_brightdata_fallback_when_no_db_and_cache_empty(self):
+        """SQLite mode with no db and empty cache -> Bright Data fallback."""
         settings = Settings(
             USE_SQLITE=True,
             BRIGHTDATA_ACCOUNT_ID="C12345",
@@ -166,7 +168,7 @@ class TestSelectNode:
         result = await service.select_node()
 
         assert result is not None
-        assert result.node_id == "local-test-node-id"
+        assert result.node_id == "brightdata-fallback"
 
     @pytest.mark.asyncio
     async def test_falls_back_to_brightdata_when_supabase_and_no_home_nodes(self):
@@ -215,8 +217,7 @@ class TestSelectNode:
 
     @pytest.mark.asyncio
     async def test_select_node_with_region_sqlite_empty_cache(self):
-        """SQLite mode, empty cache, region hint -> seeds local test node (region filter
-        is a pass-through in _node_matches_region for now)."""
+        """SQLite mode, empty cache, region hint -> Bright Data with geo-targeting."""
         settings = Settings(
             USE_SQLITE=True,
             BRIGHTDATA_ACCOUNT_ID="C12345",
@@ -227,8 +228,8 @@ class TestSelectNode:
         result = await service.select_node(region="us-west")
 
         assert result is not None
-        # Seeds local-test-node-id because cache is empty
-        assert result.node_id == "local-test-node-id"
+        assert result.node_id == "brightdata-fallback"
+        assert "-country-us" in result.endpoint_url
 
 
 # ---------------------------------------------------------------------------
@@ -250,10 +251,139 @@ class TestReportOutcome:
         settings = Settings(USE_SQLITE=True)
         service = RoutingService(httpx.AsyncClient(), settings)
 
-        # Seed a node into cache
-        node = await service.select_node()
-        assert node is not None
+        # Manually seed a node into the in-memory cache
+        test_node = ProxyNode(
+            node_id="test-node-1",
+            endpoint_url="http://127.0.0.1:9090",
+            health_score=1.0,
+        )
+        service._nodes_cache["test-node-1"] = test_node
+        service._node_health["test-node-1"] = 1.0
 
         # Report a failure -> health decreases
-        await service.report_outcome(node.node_id, False, 50, 512)
-        assert service._nodes_cache[node.node_id].health_score < 1.0
+        await service.report_outcome("test-node-1", False, 50, 512)
+        assert service._nodes_cache["test-node-1"].health_score < 1.0
+
+
+# ---------------------------------------------------------------------------
+# Fallback precedence
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackPrecedence:
+    @pytest.mark.asyncio
+    async def test_prefers_cached_home_node_over_brightdata(self):
+        """When a home node exists in cache, it is selected over Bright Data."""
+        settings = Settings(
+            USE_SQLITE=True,
+            BRIGHTDATA_ACCOUNT_ID="C12345",
+            BRIGHTDATA_ZONE="residential",
+            BRIGHTDATA_PASSWORD="pass",
+        )
+        service = RoutingService(httpx.AsyncClient(), settings)
+
+        # Seed a home node
+        service._nodes_cache["home-1"] = ProxyNode(
+            node_id="home-1",
+            endpoint_url="http://192.168.1.10:9090",
+            health_score=1.0,
+        )
+
+        result = await service.select_node()
+        assert result is not None
+        assert result.node_id == "home-1"
+
+    @pytest.mark.asyncio
+    async def test_selects_node_from_sqlite_db(self, tmp_path):
+        """When an online node exists in the SQLite database, it is selected."""
+        from app.sqlite_db import SQLiteClient
+
+        db_path = str(tmp_path / "test.db")
+        db = SQLiteClient(db_path)
+        await db.insert("nodes", {
+            "id": "db-node-1",
+            "endpoint_url": "http://10.0.0.1:9090",
+            "connectivity_type": "direct",
+            "node_type": "residential",
+            "status": "online",
+            "health_score": 1.0,
+        })
+
+        settings = Settings(
+            USE_SQLITE=True,
+            BRIGHTDATA_ACCOUNT_ID="C12345",
+            BRIGHTDATA_ZONE="residential",
+            BRIGHTDATA_PASSWORD="pass",
+        )
+        service = RoutingService(httpx.AsyncClient(), settings, db=db)
+        result = await service.select_node()
+
+        assert result is not None
+        assert result.node_id == "db-node-1"
+
+
+# ---------------------------------------------------------------------------
+# Live Bright Data integration (requires real credentials)
+# ---------------------------------------------------------------------------
+
+_BD_ACCOUNT = os.environ.get("SR_BRIGHTDATA_ACCOUNT_ID", "")
+_BD_ZONE = os.environ.get("SR_BRIGHTDATA_ZONE", "")
+_BD_PASS = os.environ.get("SR_BRIGHTDATA_PASSWORD", "")
+_has_bd_creds = bool(_BD_ACCOUNT and _BD_ZONE and _BD_PASS)
+
+
+@pytest.mark.skipif(not _has_bd_creds, reason="Bright Data credentials not set")
+class TestBrightDataLive:
+    """Smoke tests that hit the real Bright Data proxy.
+
+    Skipped unless SR_BRIGHTDATA_ACCOUNT_ID, SR_BRIGHTDATA_ZONE, and
+    SR_BRIGHTDATA_PASSWORD are set in the environment.
+    """
+
+    @pytest.mark.asyncio
+    async def test_http_request_through_brightdata(self):
+        """Make a real HTTP request through Bright Data and verify it succeeds."""
+        settings = Settings(
+            USE_SQLITE=False,
+            BRIGHTDATA_ACCOUNT_ID=_BD_ACCOUNT,
+            BRIGHTDATA_ZONE=_BD_ZONE,
+            BRIGHTDATA_PASSWORD=_BD_PASS,
+        )
+        service = RoutingService(httpx.AsyncClient(), settings)
+        node = await service.select_node()
+
+        assert node is not None
+        assert node.node_id == "brightdata-fallback"
+
+        # Make a request through the Bright Data proxy
+        # verify=False because Bright Data's proxy uses a self-signed certificate
+        async with httpx.AsyncClient(proxy=node.endpoint_url, verify=False, timeout=30.0) as client:
+            resp = await client.get("https://lumtest.com/myip.json")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # lumtest.com/myip.json returns geo info including "country" and "ip_version"
+        assert "country" in data
+
+    @pytest.mark.asyncio
+    async def test_brightdata_with_geo_targeting(self):
+        """Verify geo-targeted request routes through the expected country."""
+        settings = Settings(
+            USE_SQLITE=False,
+            BRIGHTDATA_ACCOUNT_ID=_BD_ACCOUNT,
+            BRIGHTDATA_ZONE=_BD_ZONE,
+            BRIGHTDATA_PASSWORD=_BD_PASS,
+        )
+        service = RoutingService(httpx.AsyncClient(), settings)
+        node = await service.select_node(region="us")
+
+        assert node is not None
+        assert "-country-us" in node.endpoint_url
+
+        async with httpx.AsyncClient(proxy=node.endpoint_url, verify=False, timeout=30.0) as client:
+            resp = await client.get("https://lumtest.com/myip.json")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "country" in data
+        assert data["country"].upper() == "US"
