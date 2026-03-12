@@ -1,6 +1,6 @@
 # Space Router SDK
 
-Client libraries and CLI for the [Space Router](https://github.com/gluwa/space-router) residential proxy network.
+Client libraries and CLI for the [Space Router](https://spacerouter.org) residential proxy network.
 
 ## Packages
 
@@ -63,7 +63,7 @@ cd cli && pip install -e ".[dev]" && pytest tests/ -v
 
 ## API contract
 
-These packages communicate with the Space Router Proxy Gateway over HTTP/SOCKS5. See [component-contracts.md](https://github.com/gluwa/space-router/blob/main/docs/component-contracts.md) for full specifications.
+These packages communicate with the Space Router Proxy Gateway over HTTP/SOCKS5.
 
 ## Skills
 
