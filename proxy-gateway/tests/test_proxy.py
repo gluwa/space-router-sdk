@@ -353,7 +353,7 @@ class TestProxyServerRoutingHeaders:
                 f"Host: example.com\r\n"
                 f"Proxy-Authorization: Basic {creds}\r\n"
                 f"X-SpaceRouter-Type: residential\r\n"
-                f"X-SpaceRouter-Region: us-west\r\n"
+                f"X-SpaceRouter-Region: US\r\n"
                 f"\r\n".encode()
             )
             await writer.drain()
@@ -364,7 +364,7 @@ class TestProxyServerRoutingHeaders:
 
             # Verify the routing headers were extracted and passed to select_node
             assert fake_router.last_select_kwargs["node_type"] == "residential"
-            assert fake_router.last_select_kwargs["region"] == "us-west"
+            assert fake_router.last_select_kwargs["region"] == "US"
 
             writer.close()
             await writer.wait_closed()
@@ -430,7 +430,7 @@ class TestProxyServerRoutingHeaders:
                 f"Host: example.com\r\n"
                 f"Proxy-Authorization: Basic {creds}\r\n"
                 f"X-SpaceRouter-Type: residential\r\n"
-                f"X-SpaceRouter-Region: us-west\r\n"
+                f"X-SpaceRouter-Region: US\r\n"
                 f"\r\n".encode()
             )
             await writer.drain()
@@ -497,6 +497,78 @@ class TestProxyServerRoutingHeaders:
         finally:
             server.close()
             await server.wait_closed()
+
+
+class TestProxyServerRegionValidation:
+    """X-SpaceRouter-Region must be exactly a 2-letter ISO country code."""
+
+    async def _send_region(self, region_value: str) -> bytes:
+        settings = Settings(
+            PROXY_PORT=0,
+            MANAGEMENT_PORT=0,
+            COORDINATION_API_URL="http://test",
+            COORDINATION_API_SECRET="s",
+        )
+        fake_router = FakeNodeRouter(node=None)
+        proxy = ProxyServer(
+            auth_validator=FakeAuthValidator(),
+            node_router=fake_router,
+            rate_limiter=RateLimiter(),
+            request_logger=FakeRequestLogger(),
+            settings=settings,
+        )
+        server = await proxy.start()
+        port = server.sockets[0].getsockname()[1]
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            creds = base64.b64encode(b"sr_live_abc123:").decode()
+            writer.write(
+                f"GET http://example.com/ HTTP/1.1\r\n"
+                f"Host: example.com\r\n"
+                f"Proxy-Authorization: Basic {creds}\r\n"
+                f"X-SpaceRouter-Region: {region_value}\r\n"
+                f"\r\n".encode()
+            )
+            await writer.drain()
+            response = await asyncio.wait_for(reader.read(4096), timeout=5.0)
+            writer.close()
+            await writer.wait_closed()
+            return response
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    @pytest.mark.asyncio
+    async def test_valid_region_accepted(self):
+        response = await self._send_region("US")
+        # Gets through validation to node selection (503 because FakeNodeRouter returns None)
+        assert b"503" in response
+
+    @pytest.mark.asyncio
+    async def test_valid_region_lowercase_accepted(self):
+        response = await self._send_region("kr")
+        assert b"503" in response
+
+    @pytest.mark.asyncio
+    async def test_compound_region_rejected(self):
+        response = await self._send_region("us-west")
+        assert b"400" in response
+        assert b"2-letter country code" in response
+
+    @pytest.mark.asyncio
+    async def test_three_letter_rejected(self):
+        response = await self._send_region("USA")
+        assert b"400" in response
+
+    @pytest.mark.asyncio
+    async def test_single_letter_rejected(self):
+        response = await self._send_region("U")
+        assert b"400" in response
+
+    @pytest.mark.asyncio
+    async def test_numeric_rejected(self):
+        response = await self._send_region("12")
+        assert b"400" in response
 
 
 class TestProxyServerCONNECT:

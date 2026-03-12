@@ -164,12 +164,12 @@ class TestRouteSelect:
         assert resp.status_code == 503
 
     def test_select_with_region_and_node_type(self, settings):
-        """GET /internal/route/select?region=us-west -> Bright Data with geo-targeting."""
+        """GET /internal/route/select?region=US -> Bright Data with geo-targeting."""
         client = _setup_app(settings)
 
         resp = client.get(
             "/internal/route/select",
-            params={"region": "us-west", "node_type": "residential"},
+            params={"region": "US", "node_type": "residential"},
             headers={"X-Internal-API-Key": settings.INTERNAL_API_SECRET},
         )
         assert resp.status_code == 200

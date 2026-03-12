@@ -59,7 +59,7 @@ class RouteSelectResponse(BaseModel):
 async def select_route(
     request: Request,
     response: Response,
-    region: Optional[str] = Query(default=None, description="Preferred region, e.g. 'us-west'"),
+    region: Optional[str] = Query(default=None, description="ISO 3166-1 alpha-2 country code, e.g. 'US'"),
     node_type: Optional[str] = Query(default=None, description="Preferred node type, e.g. 'residential'"),
 ) -> RouteSelectResponse:
     """Select the best available node for the given routing hints.

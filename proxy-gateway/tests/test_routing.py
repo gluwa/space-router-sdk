@@ -54,14 +54,14 @@ class TestNodeRouter:
 
         async with httpx.AsyncClient() as client:
             router = NodeRouter(client, settings)
-            result = await router.select_node(region="us-west", node_type="residential")
+            result = await router.select_node(region="US", node_type="residential")
 
         assert result is not None
         assert result.node_id == "us-res"
 
         # Verify query params were sent
         req = route.calls[0].request
-        assert "region=us-west" in str(req.url)
+        assert "region=US" in str(req.url)
         assert "node_type=residential" in str(req.url)
 
     @pytest.mark.asyncio

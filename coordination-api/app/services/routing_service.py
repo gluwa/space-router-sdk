@@ -11,39 +11,13 @@ from app.config import Settings
 
 logger = logging.getLogger(__name__)
 
-# Maps Space Router region prefixes to ISO-3166-1 alpha-2 country codes used
-# by Bright Data's username targeting parameter (-country-XX).
-# Extend this table as new regions are registered by home node operators.
-_REGION_TO_COUNTRY: dict[str, str] = {
-    "us": "us",
-    "eu": "de",
-    "ap": "jp",
-    "au": "au",
-    "ca": "ca",
-    "gb": "gb",
-    "uk": "gb",
-    "de": "de",
-    "fr": "fr",
-    "jp": "jp",
-    "sg": "sg",
-    "br": "br",
-    "in": "in",
-}
+def _region_to_country(region: str) -> str:
+    """Return a lowercase ISO 3166-1 alpha-2 country code for Bright Data.
 
-
-def _region_to_country(region: str) -> str | None:
-    """Derive a Bright Data country code from a Space Router region string.
-
-    Accepts either a bare ISO code (``"us"``) or a compound region string
-    (``"us-west"``, ``"eu-central"``).  Returns ``None`` if no mapping found.
+    The Proxy Gateway validates that *region* is exactly a 2-letter country
+    code, so this function simply lowercases the value.
     """
-    region = region.lower().strip()
-    # Try exact match first
-    if region in _REGION_TO_COUNTRY:
-        return _REGION_TO_COUNTRY[region]
-    # Try prefix (e.g. "us-west" -> "us")
-    prefix = region.split("-")[0]
-    return _REGION_TO_COUNTRY.get(prefix)
+    return region.lower().strip()
 
 
 @dataclass
@@ -152,14 +126,8 @@ class RoutingService:
 
         if region:
             country_code = _region_to_country(region)
-            if country_code:
-                username += f"-country-{country_code}"
-                logger.debug("Bright Data fallback with country targeting: %s", country_code)
-            else:
-                logger.warning(
-                    "No country mapping for region %r — Bright Data fallback will not geo-target",
-                    region,
-                )
+            username += f"-country-{country_code}"
+            logger.debug("Bright Data fallback with country targeting: %s", country_code)
 
         endpoint_url = f"http://{username}:{s.BRIGHTDATA_PASSWORD}@{s.BRIGHTDATA_HOST}:{s.BRIGHTDATA_PORT}"
 

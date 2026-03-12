@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -44,6 +45,9 @@ _ROUTING_HINT_HEADERS = frozenset([
     "x-spacerouter-region",
     "x-spacerouter-type",
 ])
+
+# X-SpaceRouter-Region must be an ISO 3166-1 alpha-2 country code.
+_REGION_RE = re.compile(r"^[A-Za-z]{2}$")
 
 
 def parse_headers(raw: bytes) -> dict[str, str]:
@@ -464,6 +468,14 @@ class ProxyServer:
             requested_type = headers.get(
                 "X-SpaceRouter-Type", headers.get("x-spacerouter-type")
             )
+
+            if requested_region is not None and not _REGION_RE.match(requested_region):
+                writer.write(bad_request(
+                    "X-SpaceRouter-Region must be a 2-letter country code (ISO 3166-1 alpha-2)",
+                    request_id,
+                ))
+                await writer.drain()
+                return
 
             # --- Authentication ---
             auth_header = headers.get("Proxy-Authorization", "")

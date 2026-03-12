@@ -15,21 +15,14 @@ from app.services.routing_service import ProxyNode, RoutingService, _region_to_c
 
 
 class TestRegionToCountry:
-    def test_bare_iso_code(self):
+    def test_lowercase_passthrough(self):
         assert _region_to_country("us") == "us"
 
-    def test_compound_region(self):
-        assert _region_to_country("us-west") == "us"
-
-    def test_eu_central(self):
-        assert _region_to_country("eu-central") == "de"
-
-    def test_unknown_returns_none(self):
-        assert _region_to_country("unknown-region") is None
-
-    def test_case_insensitive(self):
+    def test_uppercase_lowered(self):
         assert _region_to_country("US") == "us"
-        assert _region_to_country("EU-CENTRAL") == "de"
+
+    def test_mixed_case(self):
+        assert _region_to_country("Kr") == "kr"
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +31,7 @@ class TestRegionToCountry:
 
 
 class TestGetBrightdataFallback:
-    def test_us_west_returns_country_us(self):
+    def test_us_region_returns_country_us(self):
         settings = Settings(
             USE_SQLITE=True,
             BRIGHTDATA_ACCOUNT_ID="C12345",
@@ -46,14 +39,14 @@ class TestGetBrightdataFallback:
             BRIGHTDATA_PASSWORD="pass",
         )
         service = RoutingService(httpx.AsyncClient(), settings)
-        node = service._get_brightdata_fallback(region="us-west")
+        node = service._get_brightdata_fallback(region="US")
 
         assert node is not None
         assert node.node_id == "brightdata-fallback"
         assert "-country-us" in node.endpoint_url
         assert "brd-customer-C12345-zone-residential" in node.endpoint_url
 
-    def test_eu_central_returns_country_de(self):
+    def test_de_region_returns_country_de(self):
         settings = Settings(
             USE_SQLITE=True,
             BRIGHTDATA_ACCOUNT_ID="C12345",
@@ -61,25 +54,10 @@ class TestGetBrightdataFallback:
             BRIGHTDATA_PASSWORD="pass",
         )
         service = RoutingService(httpx.AsyncClient(), settings)
-        node = service._get_brightdata_fallback(region="eu-central")
+        node = service._get_brightdata_fallback(region="DE")
 
         assert node is not None
         assert "-country-de" in node.endpoint_url
-
-    def test_unknown_region_no_country_suffix(self):
-        """Unknown region -> no crash, no country suffix, still returns a node."""
-        settings = Settings(
-            USE_SQLITE=True,
-            BRIGHTDATA_ACCOUNT_ID="C12345",
-            BRIGHTDATA_ZONE="residential",
-            BRIGHTDATA_PASSWORD="pass",
-        )
-        service = RoutingService(httpx.AsyncClient(), settings)
-        node = service._get_brightdata_fallback(region="unknown-region")
-
-        assert node is not None
-        assert "-country-" not in node.endpoint_url
-        assert "brd-customer-C12345-zone-residential" in node.endpoint_url
 
     def test_returns_none_when_account_id_empty(self):
         settings = Settings(
@@ -201,7 +179,7 @@ class TestSelectNode:
 
     @pytest.mark.asyncio
     async def test_brightdata_fallback_with_region(self):
-        """select_node(region='us-west') falls back to Bright Data with -country-us."""
+        """select_node(region='US') falls back to Bright Data with -country-us."""
         settings = Settings(
             USE_SQLITE=False,
             BRIGHTDATA_ACCOUNT_ID="C12345",
@@ -209,7 +187,7 @@ class TestSelectNode:
             BRIGHTDATA_PASSWORD="pass",
         )
         service = RoutingService(httpx.AsyncClient(), settings)
-        result = await service.select_node(region="us-west")
+        result = await service.select_node(region="US")
 
         assert result is not None
         assert result.node_id == "brightdata-fallback"
@@ -225,7 +203,7 @@ class TestSelectNode:
             BRIGHTDATA_PASSWORD="pass",
         )
         service = RoutingService(httpx.AsyncClient(), settings)
-        result = await service.select_node(region="us-west")
+        result = await service.select_node(region="US")
 
         assert result is not None
         assert result.node_id == "brightdata-fallback"
