@@ -19,9 +19,9 @@ def runner():
 def cli_env(monkeypatch):
     """Set standard env vars for testing."""
     monkeypatch.setenv("SR_API_KEY", "sr_live_test_key_000")
-    monkeypatch.setenv("SR_GATEWAY_URL", "http://localhost:8080")
-    monkeypatch.setenv("SR_COORDINATION_API_URL", "http://localhost:8000")
-    monkeypatch.setenv("SR_GATEWAY_MANAGEMENT_URL", "http://localhost:8081")
+    monkeypatch.setenv("SR_GATEWAY_URL", "http://gateway.spacerouter.org:8080")
+    monkeypatch.setenv("SR_COORDINATION_API_URL", "https://coordination.spacerouter.org")
+    monkeypatch.setenv("SR_GATEWAY_MANAGEMENT_URL", "http://gateway.spacerouter.org:8081")
 
 
 def parse_json_output(output: str) -> dict | list:

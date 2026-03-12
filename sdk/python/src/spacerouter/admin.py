@@ -12,7 +12,7 @@ import httpx
 
 from spacerouter.models import ApiKey, ApiKeyInfo
 
-_DEFAULT_COORDINATION_URL = "http://localhost:8000"
+_DEFAULT_COORDINATION_URL = "https://coordination.spacerouter.org"
 
 
 class SpaceRouterAdmin:
@@ -20,7 +20,7 @@ class SpaceRouterAdmin:
 
     Example::
 
-        with SpaceRouterAdmin("http://localhost:8000") as admin:
+        with SpaceRouterAdmin() as admin:
             key = admin.create_api_key("my-agent")
             print(key.api_key)  # sr_live_...
     """
@@ -74,7 +74,7 @@ class AsyncSpaceRouterAdmin:
 
     Example::
 
-        async with AsyncSpaceRouterAdmin("http://localhost:8000") as admin:
+        async with AsyncSpaceRouterAdmin() as admin:
             key = await admin.create_api_key("my-agent")
             print(key.api_key)
     """

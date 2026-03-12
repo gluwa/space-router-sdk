@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,socks]"
         working-directory: sdk/python
       - run: pytest tests/ -v
         working-directory: sdk/python

@@ -16,7 +16,7 @@ from spacerouter.models import ApiKey, ApiKeyInfo
 class TestSpaceRouterAdmin:
     @respx.mock
     def test_create_api_key(self):
-        respx.post("http://localhost:8000/api-keys").mock(
+        respx.post("https://coordination.spacerouter.org/api-keys").mock(
             return_value=httpx.Response(
                 201,
                 json={
@@ -36,7 +36,7 @@ class TestSpaceRouterAdmin:
 
     @respx.mock
     def test_create_api_key_custom_rpm(self):
-        respx.post("http://localhost:8000/api-keys").mock(
+        respx.post("https://coordination.spacerouter.org/api-keys").mock(
             return_value=httpx.Response(
                 201,
                 json={
@@ -53,7 +53,7 @@ class TestSpaceRouterAdmin:
 
     @respx.mock
     def test_list_api_keys(self):
-        respx.get("http://localhost:8000/api-keys").mock(
+        respx.get("https://coordination.spacerouter.org/api-keys").mock(
             return_value=httpx.Response(
                 200,
                 json=[
@@ -85,7 +85,7 @@ class TestSpaceRouterAdmin:
 
     @respx.mock
     def test_revoke_api_key(self):
-        respx.delete("http://localhost:8000/api-keys/key-uuid").mock(
+        respx.delete("https://coordination.spacerouter.org/api-keys/key-uuid").mock(
             return_value=httpx.Response(204)
         )
         with SpaceRouterAdmin() as admin:
@@ -93,7 +93,7 @@ class TestSpaceRouterAdmin:
 
     @respx.mock
     def test_server_error_raises(self):
-        respx.post("http://localhost:8000/api-keys").mock(
+        respx.post("https://coordination.spacerouter.org/api-keys").mock(
             return_value=httpx.Response(500, json={"detail": "Internal error"})
         )
         with SpaceRouterAdmin() as admin:
@@ -119,7 +119,7 @@ class TestAsyncSpaceRouterAdmin:
     @pytest.mark.asyncio
     @respx.mock
     async def test_create_api_key(self):
-        respx.post("http://localhost:8000/api-keys").mock(
+        respx.post("https://coordination.spacerouter.org/api-keys").mock(
             return_value=httpx.Response(
                 201,
                 json={
@@ -137,7 +137,7 @@ class TestAsyncSpaceRouterAdmin:
     @pytest.mark.asyncio
     @respx.mock
     async def test_list_api_keys(self):
-        respx.get("http://localhost:8000/api-keys").mock(
+        respx.get("https://coordination.spacerouter.org/api-keys").mock(
             return_value=httpx.Response(
                 200,
                 json=[
@@ -159,7 +159,7 @@ class TestAsyncSpaceRouterAdmin:
     @pytest.mark.asyncio
     @respx.mock
     async def test_revoke_api_key(self):
-        respx.delete("http://localhost:8000/api-keys/uuid-1").mock(
+        respx.delete("https://coordination.spacerouter.org/api-keys/uuid-1").mock(
             return_value=httpx.Response(204)
         )
         async with AsyncSpaceRouterAdmin() as admin:

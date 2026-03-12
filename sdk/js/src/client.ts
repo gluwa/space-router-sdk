@@ -16,7 +16,7 @@ import {
 import type { IpType, SpaceRouterOptions } from "./models.js";
 import { ProxyResponse } from "./models.js";
 
-const DEFAULT_HTTP_GATEWAY = "http://localhost:8080";
+const DEFAULT_HTTP_GATEWAY = "http://gateway.spacerouter.org:8080";
 const DEFAULT_TIMEOUT = 30_000;
 
 /** Options passed through to individual requests. */

@@ -6,7 +6,7 @@
 
 import type { ApiKey, ApiKeyInfo, SpaceRouterAdminOptions } from "./models.js";
 
-const DEFAULT_COORDINATION_URL = "http://localhost:8000";
+const DEFAULT_COORDINATION_URL = "https://coordination.spacerouter.org";
 const DEFAULT_TIMEOUT = 10_000;
 
 /**
@@ -14,7 +14,7 @@ const DEFAULT_TIMEOUT = 10_000;
  *
  * @example
  * ```ts
- * const admin = new SpaceRouterAdmin("http://localhost:8000");
+ * const admin = new SpaceRouterAdmin();
  * const key = await admin.createApiKey("my-agent");
  * console.log(key.api_key); // sr_live_...
  * ```

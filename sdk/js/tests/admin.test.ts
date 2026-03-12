@@ -48,7 +48,7 @@ describe("SpaceRouterAdmin", () => {
 
       // Verify request
       const [url, init] = fetchSpy.mock.calls[0];
-      expect(url).toBe("http://localhost:8000/api-keys");
+      expect(url).toBe("https://coordination.spacerouter.org/api-keys");
       expect(init.method).toBe("POST");
       const body = JSON.parse(init.body as string);
       expect(body.name).toBe("my-agent");
@@ -125,7 +125,7 @@ describe("SpaceRouterAdmin", () => {
       await admin.revokeApiKey("key-uuid");
 
       const [url, init] = fetchSpy.mock.calls[0];
-      expect(url).toBe("http://localhost:8000/api-keys/key-uuid");
+      expect(url).toBe("https://coordination.spacerouter.org/api-keys/key-uuid");
       expect(init.method).toBe("DELETE");
       admin.close();
     });
@@ -157,11 +157,11 @@ describe("SpaceRouterAdmin", () => {
     it("strips trailing slash", async () => {
       const fetchSpy = mockFetch(200, []);
 
-      const admin = new SpaceRouterAdmin("http://localhost:8000/");
+      const admin = new SpaceRouterAdmin("https://coordination.spacerouter.org/");
       await admin.listApiKeys();
 
       expect(fetchSpy.mock.calls[0][0]).toBe(
-        "http://localhost:8000/api-keys",
+        "https://coordination.spacerouter.org/api-keys",
       );
       admin.close();
     });

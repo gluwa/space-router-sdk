@@ -21,8 +21,8 @@ from spacerouter.models import ProxyResponse
 
 IpType = Literal["residential", "mobile", "datacenter", "business"]
 
-_DEFAULT_HTTP_GATEWAY = "http://localhost:8080"
-_DEFAULT_SOCKS5_GATEWAY = "socks5://localhost:1080"
+_DEFAULT_HTTP_GATEWAY = "http://gateway.spacerouter.org:8080"
+_DEFAULT_SOCKS5_GATEWAY = "socks5://gateway.spacerouter.org:1080"
 
 
 def _build_proxy(
