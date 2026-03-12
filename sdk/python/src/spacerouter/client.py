@@ -6,6 +6,7 @@ for routing HTTP requests through the Space Router residential proxy network.
 
 from __future__ import annotations
 
+import ssl
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -21,8 +22,42 @@ from spacerouter.models import ProxyResponse
 
 IpType = Literal["residential", "mobile", "datacenter", "business"]
 
-_DEFAULT_HTTP_GATEWAY = "http://gateway.spacerouter.org:8080"
+_DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org:8080"
 _DEFAULT_SOCKS5_GATEWAY = "socks5://gateway.spacerouter.org:1080"
+_DEFAULT_COORDINATION_URL = "https://coordination.spacerouter.org"
+
+
+# ---------------------------------------------------------------------------
+# CA certificate helpers
+# ---------------------------------------------------------------------------
+
+
+def fetch_ca_cert(coordination_url: str = _DEFAULT_COORDINATION_URL) -> str | None:
+    """Fetch the proxy network CA certificate from the Coordination API.
+
+    The proxy network may re-sign target-site TLS certificates with its own
+    CA.  This function retrieves that CA so the SDK can trust it.
+
+    Returns the PEM-encoded certificate string, or ``None`` when the
+    coordination API indicates that no special CA is needed (HTTP 503).
+    """
+    url = f"{coordination_url.rstrip('/')}/ca-cert"
+    response = httpx.get(url, timeout=10.0)
+    if response.status_code == 503:
+        return None
+    response.raise_for_status()
+    return response.text
+
+
+def _build_ssl_context(ca_pem: str) -> ssl.SSLContext:
+    """Build an SSL context that trusts both the system CAs and *ca_pem*."""
+    ctx = ssl.create_default_context()
+    ctx.load_verify_locations(cadata=ca_pem)
+    return ctx
+
+
+# Sentinel distinguishing "not provided" from an explicit ``None``.
+_UNSET: Any = type("_Unset", (), {"__repr__": lambda self: "<UNSET>"})()
 
 
 def _build_proxy(
@@ -35,13 +70,14 @@ def _build_proxy(
     """Build an httpx-compatible proxy specification with embedded credentials."""
     parsed = urlparse(gateway_url)
     host = parsed.hostname or "localhost"
+    scheme = parsed.scheme or ("socks5" if protocol == "socks5" else "https")
 
     if protocol == "socks5":
         port = parsed.port or 1080
         proxy_url = f"socks5://{api_key}:@{host}:{port}"
     else:
         port = parsed.port or 8080
-        proxy_url = f"http://{api_key}:@{host}:{port}"
+        proxy_url = f"{scheme}://{api_key}:@{host}:{port}"
 
     # Routing headers must go on the proxy CONNECT request (not the tunnelled
     # request) so the gateway can read them for node selection.  httpx.Proxy
@@ -123,6 +159,8 @@ class SpaceRouter:
         ip_type: IpType | None = None,
         region: str | None = None,
         timeout: float = 30.0,
+        coordination_url: str = _DEFAULT_COORDINATION_URL,
+        ca_cert: str | None = _UNSET,
         **httpx_kwargs: Any,
     ) -> None:
         self._api_key = api_key
@@ -131,9 +169,25 @@ class SpaceRouter:
         self._ip_type = ip_type
         self._region = region
         self._timeout = timeout
+        self._coordination_url = coordination_url
+
+        # Resolve TLS verification.
+        # Priority: explicit ``verify`` kwarg > ``ca_cert`` param > auto-fetch.
+        verify = httpx_kwargs.pop("verify", None)
+        if verify is None:
+            if ca_cert is _UNSET:
+                pem = fetch_ca_cert(coordination_url)
+            else:
+                pem = ca_cert
+            self._ca_cert = pem
+            verify = _build_ssl_context(pem) if pem else True
+        else:
+            self._ca_cert = ca_cert if ca_cert is not _UNSET else None
 
         proxy = _build_proxy(api_key, gateway_url, protocol, ip_type, region)
-        self._client = httpx.Client(proxy=proxy, timeout=timeout, **httpx_kwargs)
+        self._client = httpx.Client(
+            proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
+        )
 
     # -- HTTP methods -------------------------------------------------------
 
@@ -177,6 +231,8 @@ class SpaceRouter:
             ip_type=ip_type,
             region=region,
             timeout=self._timeout,
+            coordination_url=self._coordination_url,
+            ca_cert=self._ca_cert,
         )
 
     # -- Lifecycle ----------------------------------------------------------
@@ -221,6 +277,8 @@ class AsyncSpaceRouter:
         ip_type: IpType | None = None,
         region: str | None = None,
         timeout: float = 30.0,
+        coordination_url: str = _DEFAULT_COORDINATION_URL,
+        ca_cert: str | None = _UNSET,
         **httpx_kwargs: Any,
     ) -> None:
         self._api_key = api_key
@@ -229,9 +287,24 @@ class AsyncSpaceRouter:
         self._ip_type = ip_type
         self._region = region
         self._timeout = timeout
+        self._coordination_url = coordination_url
+
+        # Resolve TLS verification (same logic as sync client).
+        verify = httpx_kwargs.pop("verify", None)
+        if verify is None:
+            if ca_cert is _UNSET:
+                pem = fetch_ca_cert(coordination_url)
+            else:
+                pem = ca_cert
+            self._ca_cert = pem
+            verify = _build_ssl_context(pem) if pem else True
+        else:
+            self._ca_cert = ca_cert if ca_cert is not _UNSET else None
 
         proxy = _build_proxy(api_key, gateway_url, protocol, ip_type, region)
-        self._client = httpx.AsyncClient(proxy=proxy, timeout=timeout, **httpx_kwargs)
+        self._client = httpx.AsyncClient(
+            proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
+        )
 
     # -- HTTP methods -------------------------------------------------------
 
@@ -275,6 +348,8 @@ class AsyncSpaceRouter:
             ip_type=ip_type,
             region=region,
             timeout=self._timeout,
+            coordination_url=self._coordination_url,
+            ca_cert=self._ca_cert,
         )
 
     # -- Lifecycle ----------------------------------------------------------
