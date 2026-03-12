@@ -1,6 +1,6 @@
 /** SpaceRouter JavaScript SDK — route HTTP requests through residential IPs. */
 
-export { SpaceRouter } from "./client.js";
+export { SpaceRouter, fetchCaCert } from "./client.js";
 export type { RequestOptions } from "./client.js";
 
 export { SpaceRouterAdmin } from "./admin.js";

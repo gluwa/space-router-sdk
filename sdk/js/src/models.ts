@@ -3,7 +3,7 @@ export type IpType = "residential" | "mobile" | "datacenter" | "business";
 
 /** Options for the {@link SpaceRouter} constructor. */
 export interface SpaceRouterOptions {
-  /** Proxy gateway URL. Default: `"http://localhost:8080"` */
+  /** Proxy gateway URL. Default: `"https://gateway.spacerouter.org:8080"` */
   gatewayUrl?: string;
   /** Proxy protocol. Default: `"http"` */
   protocol?: "http" | "socks5";
@@ -13,6 +13,14 @@ export interface SpaceRouterOptions {
   region?: string;
   /** Request timeout in milliseconds. Default: `30_000` */
   timeout?: number;
+  /** Coordination API URL (for auto-fetching the CA cert). */
+  coordinationUrl?: string;
+  /**
+   * PEM-encoded CA certificate for verifying target-site TLS through the
+   * proxy network.  When omitted the SDK fetches the cert from the
+   * Coordination API automatically on the first request.
+   */
+  caCert?: string | null;
 }
 
 /** Options for the {@link SpaceRouterAdmin} constructor. */

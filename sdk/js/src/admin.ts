@@ -80,6 +80,23 @@ export class SpaceRouterAdmin {
     }
   }
 
+  /**
+   * Fetch the proxy network CA certificate.
+   *
+   * Returns the PEM-encoded certificate, or `null` when the proxy
+   * network does not require a custom CA (HTTP 503).
+   */
+  async fetchCaCert(): Promise<string | null> {
+    const response = await this._fetch("/ca-cert", { method: "GET" });
+    if (response.status === 503) return null;
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch CA cert: ${response.status} ${response.statusText}`,
+      );
+    }
+    return response.text();
+  }
+
   /** Close — no-op, included for API symmetry with SpaceRouter. */
   close(): void {
     // No persistent connections to clean up with fetch
