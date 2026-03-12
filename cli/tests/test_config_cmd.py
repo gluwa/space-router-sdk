@@ -14,8 +14,8 @@ class TestConfigShow:
         result = runner.invoke(app, ["config", "show"])
         assert result.exit_code == 0
         data = parse_json_output(result.output)
-        assert data["gateway_url"] == "http://localhost:8080"
-        assert data["coordination_api_url"] == "http://localhost:8000"
+        assert data["gateway_url"] == "http://gateway.spacerouter.org:8080"
+        assert data["coordination_api_url"] == "https://coordination.spacerouter.org"
         assert data["timeout"] == 30.0
         assert data["api_key"] is None
 

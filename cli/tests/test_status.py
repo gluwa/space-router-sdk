@@ -39,7 +39,7 @@ class TestStatus:
     @patch("spacerouter_cli.commands.status.httpx.get")
     def test_coordination_unreachable(self, mock_get, runner, cli_env):
         def side_effect(url, **kwargs):
-            if "localhost:8000" in url:
+            if "coordination.spacerouter.org" in url:
                 raise httpx.ConnectError("Connection refused")
             if "/readyz" in url:
                 return _ok_response({"status": "ready"})
@@ -56,7 +56,7 @@ class TestStatus:
     @patch("spacerouter_cli.commands.status.httpx.get")
     def test_gateway_unreachable(self, mock_get, runner, cli_env):
         def side_effect(url, **kwargs):
-            if "localhost:8081" in url:
+            if "gateway.spacerouter.org:8081" in url:
                 raise httpx.ConnectError("Connection refused")
             return _ok_response()
 
