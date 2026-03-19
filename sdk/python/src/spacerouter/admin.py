@@ -10,7 +10,17 @@ from typing import Any
 
 import httpx
 
-from spacerouter.models import ApiKey, ApiKeyInfo
+from spacerouter.models import (
+    ApiKey,
+    ApiKeyInfo,
+    BillingReissueResult,
+    CheckoutSession,
+    Node,
+    RegisterChallenge,
+    RegisterResult,
+    TransferPage,
+)
+from spacerouter.models import NodeStatus
 
 _DEFAULT_COORDINATION_URL = "https://coordination.spacerouter.org"
 
@@ -66,10 +76,123 @@ class SpaceRouterAdmin:
         network does not require a custom CA (HTTP 503).
         """
         response = self._client.get("/ca-cert")
-        if response.status_code == 503:
+        if response.status_code in (404, 503):
             return None
         response.raise_for_status()
         return response.text
+
+    # -- Node management -----------------------------------------------------
+
+    def register_node(
+        self,
+        *,
+        endpoint_url: str,
+        wallet_address: str,
+        label: str | None = None,
+        connectivity_type: str | None = None,
+    ) -> Node:
+        """Register a new proxy node."""
+        payload: dict[str, Any] = {
+            "endpoint_url": endpoint_url,
+            "wallet_address": wallet_address,
+        }
+        if label is not None:
+            payload["label"] = label
+        if connectivity_type is not None:
+            payload["connectivity_type"] = connectivity_type
+        response = self._client.post("/nodes", json=payload)
+        response.raise_for_status()
+        return Node.model_validate(response.json())
+
+    def list_nodes(self) -> list[Node]:
+        """List all registered nodes."""
+        response = self._client.get("/nodes")
+        response.raise_for_status()
+        return [Node.model_validate(item) for item in response.json()]
+
+    def update_node_status(self, node_id: str, *, status: NodeStatus) -> None:
+        """Update a node's operational status."""
+        response = self._client.patch(
+            f"/nodes/{node_id}/status", json={"status": status}
+        )
+        response.raise_for_status()
+
+    def delete_node(self, node_id: str) -> None:
+        """Delete a registered node."""
+        response = self._client.delete(f"/nodes/{node_id}")
+        response.raise_for_status()
+
+    # -- Staking registration ------------------------------------------------
+
+    def get_register_challenge(self, address: str) -> RegisterChallenge:
+        """Request a signing challenge for Creditcoin staking registration."""
+        response = self._client.post(
+            "/nodes/register/challenge", json={"address": address}
+        )
+        response.raise_for_status()
+        return RegisterChallenge.model_validate(response.json())
+
+    def verify_and_register(
+        self,
+        *,
+        address: str,
+        endpoint_url: str,
+        signed_nonce: str,
+        label: str | None = None,
+    ) -> RegisterResult:
+        """Verify a signed nonce and register the node via staking."""
+        payload: dict[str, Any] = {
+            "address": address,
+            "endpoint_url": endpoint_url,
+            "signed_nonce": signed_nonce,
+        }
+        if label is not None:
+            payload["label"] = label
+        response = self._client.post("/nodes/register/verify", json=payload)
+        response.raise_for_status()
+        return RegisterResult.model_validate(response.json())
+
+    # -- Billing -------------------------------------------------------------
+
+    def create_checkout(self, email: str) -> CheckoutSession:
+        """Create a Stripe checkout session."""
+        response = self._client.post("/billing/checkout", json={"email": email})
+        response.raise_for_status()
+        return CheckoutSession.model_validate(response.json())
+
+    def verify_email(self, token: str) -> None:
+        """Verify an email address with a token."""
+        response = self._client.get("/billing/verify", params={"token": token})
+        response.raise_for_status()
+
+    def reissue_api_key(self, *, email: str, token: str) -> BillingReissueResult:
+        """Reissue an API key using email verification."""
+        response = self._client.post(
+            "/billing/reissue", json={"email": email, "token": token}
+        )
+        response.raise_for_status()
+        return BillingReissueResult.model_validate(response.json())
+
+    # -- Dashboard -----------------------------------------------------------
+
+    def get_transfers(
+        self,
+        *,
+        wallet_address: str,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> TransferPage:
+        """Get paginated data transfer history."""
+        params: dict[str, Any] = {"wallet_address": wallet_address}
+        if page is not None:
+            params["page"] = page
+        if page_size is not None:
+            params["page_size"] = page_size
+        response = self._client.get("/dashboard/transfers", params=params)
+        response.raise_for_status()
+        return TransferPage.model_validate(response.json())
+
+    # -- Lifecycle -----------------------------------------------------------
 
     def close(self) -> None:
         self._client.close()
@@ -129,10 +252,129 @@ class AsyncSpaceRouterAdmin:
         network does not require a custom CA (HTTP 503).
         """
         response = await self._client.get("/ca-cert")
-        if response.status_code == 503:
+        if response.status_code in (404, 503):
             return None
         response.raise_for_status()
         return response.text
+
+    # -- Node management -----------------------------------------------------
+
+    async def register_node(
+        self,
+        *,
+        endpoint_url: str,
+        wallet_address: str,
+        label: str | None = None,
+        connectivity_type: str | None = None,
+    ) -> Node:
+        """Register a new proxy node."""
+        payload: dict[str, Any] = {
+            "endpoint_url": endpoint_url,
+            "wallet_address": wallet_address,
+        }
+        if label is not None:
+            payload["label"] = label
+        if connectivity_type is not None:
+            payload["connectivity_type"] = connectivity_type
+        response = await self._client.post("/nodes", json=payload)
+        response.raise_for_status()
+        return Node.model_validate(response.json())
+
+    async def list_nodes(self) -> list[Node]:
+        """List all registered nodes."""
+        response = await self._client.get("/nodes")
+        response.raise_for_status()
+        return [Node.model_validate(item) for item in response.json()]
+
+    async def update_node_status(self, node_id: str, *, status: NodeStatus) -> None:
+        """Update a node's operational status."""
+        response = await self._client.patch(
+            f"/nodes/{node_id}/status", json={"status": status}
+        )
+        response.raise_for_status()
+
+    async def delete_node(self, node_id: str) -> None:
+        """Delete a registered node."""
+        response = await self._client.delete(f"/nodes/{node_id}")
+        response.raise_for_status()
+
+    # -- Staking registration ------------------------------------------------
+
+    async def get_register_challenge(self, address: str) -> RegisterChallenge:
+        """Request a signing challenge for Creditcoin staking registration."""
+        response = await self._client.post(
+            "/nodes/register/challenge", json={"address": address}
+        )
+        response.raise_for_status()
+        return RegisterChallenge.model_validate(response.json())
+
+    async def verify_and_register(
+        self,
+        *,
+        address: str,
+        endpoint_url: str,
+        signed_nonce: str,
+        label: str | None = None,
+    ) -> RegisterResult:
+        """Verify a signed nonce and register the node via staking."""
+        payload: dict[str, Any] = {
+            "address": address,
+            "endpoint_url": endpoint_url,
+            "signed_nonce": signed_nonce,
+        }
+        if label is not None:
+            payload["label"] = label
+        response = await self._client.post("/nodes/register/verify", json=payload)
+        response.raise_for_status()
+        return RegisterResult.model_validate(response.json())
+
+    # -- Billing -------------------------------------------------------------
+
+    async def create_checkout(self, email: str) -> CheckoutSession:
+        """Create a Stripe checkout session."""
+        response = await self._client.post(
+            "/billing/checkout", json={"email": email}
+        )
+        response.raise_for_status()
+        return CheckoutSession.model_validate(response.json())
+
+    async def verify_email(self, token: str) -> None:
+        """Verify an email address with a token."""
+        response = await self._client.get(
+            "/billing/verify", params={"token": token}
+        )
+        response.raise_for_status()
+
+    async def reissue_api_key(
+        self, *, email: str, token: str
+    ) -> BillingReissueResult:
+        """Reissue an API key using email verification."""
+        response = await self._client.post(
+            "/billing/reissue", json={"email": email, "token": token}
+        )
+        response.raise_for_status()
+        return BillingReissueResult.model_validate(response.json())
+
+    # -- Dashboard -----------------------------------------------------------
+
+    async def get_transfers(
+        self,
+        *,
+        wallet_address: str,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> TransferPage:
+        """Get paginated data transfer history."""
+        params: dict[str, Any] = {"wallet_address": wallet_address}
+        if page is not None:
+            params["page"] = page
+        if page_size is not None:
+            params["page_size"] = page_size
+        response = await self._client.get("/dashboard/transfers", params=params)
+        response.raise_for_status()
+        return TransferPage.model_validate(response.json())
+
+    # -- Lifecycle -----------------------------------------------------------
 
     async def aclose(self) -> None:
         await self._client.aclose()

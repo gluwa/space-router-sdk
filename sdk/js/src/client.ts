@@ -13,7 +13,7 @@ import {
   RateLimitError,
   UpstreamError,
 } from "./errors.js";
-import type { SpaceRouterOptions } from "./models.js";
+import type { IpType, SpaceRouterOptions } from "./models.js";
 import { ProxyResponse } from "./models.js";
 
 const DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org:8080";
@@ -58,11 +58,17 @@ export async function fetchCaCert(
     "",
   );
   const response = await fetch(`${base}/ca-cert`);
-  if (response.status === 503) return null;
+  if (response.status === 404 || response.status === 503) return null;
   if (!response.ok) {
     throw new Error(
       `Failed to fetch CA cert: ${response.status} ${response.statusText}`,
     );
+  }
+  // The endpoint returns JSON {"ca_cert": "<PEM>"} or raw PEM text.
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("json")) {
+    const body = (await response.json()) as { ca_cert: string };
+    return body.ca_cert;
   }
   return response.text();
 }
@@ -94,15 +100,22 @@ function buildAgent(
   }
 
   const port = parsed.port || "8080";
-  const proxyUrl = `${scheme}://${apiKey}:@${host}:${port}`;
+  const proxyUrl = `${scheme}://${host}:${port}`;
+  // undici sends `proxy-authorization` (lowercase) but some proxy servers
+  // require title-case `Proxy-Authorization`.  Use explicit headers instead
+  // of the `token` option to control the casing.
+  const proxyHeaders: Record<string, string> = {
+    "Proxy-Authorization": `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+  };
 
   if (caCert) {
     return new ProxyAgent({
       uri: proxyUrl,
+      headers: proxyHeaders,
       requestTls: { ca: caCert },
     });
   }
-  return new ProxyAgent(proxyUrl);
+  return new ProxyAgent({ uri: proxyUrl, headers: proxyHeaders });
 }
 
 /** Check for proxy-layer errors and throw typed exceptions. */
@@ -175,6 +188,7 @@ export class SpaceRouter {
   private readonly _gatewayUrl: string;
   private readonly _protocol: "http" | "socks5";
   private readonly _region: string | undefined;
+  private readonly _ipType: IpType | undefined;
   private readonly _timeout: number;
   private readonly _coordinationUrl: string;
 
@@ -188,6 +202,7 @@ export class SpaceRouter {
     this._gatewayUrl = options?.gatewayUrl ?? DEFAULT_HTTP_GATEWAY;
     this._protocol = options?.protocol ?? "http";
     this._region = options?.region;
+    this._ipType = options?.ipType;
     if (this._region) validateRegion(this._region);
     this._timeout = options?.timeout ?? DEFAULT_TIMEOUT;
     this._coordinationUrl =
@@ -241,6 +256,9 @@ export class SpaceRouter {
     if (this._region) {
       headers["X-SpaceRouter-Region"] = this._region;
     }
+    if (this._ipType) {
+      headers["X-SpaceRouter-IP-Type"] = this._ipType;
+    }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this._timeout);
@@ -292,11 +310,13 @@ export class SpaceRouter {
   /** Return a new client with different routing preferences. */
   withRouting(options: {
     region?: string;
+    ipType?: IpType;
   }): SpaceRouter {
     return new SpaceRouter(this._apiKey, {
       gatewayUrl: this._gatewayUrl,
       protocol: this._protocol,
       region: options.region,
+      ipType: options.ipType,
       timeout: this._timeout,
       coordinationUrl: this._coordinationUrl,
       caCert: this._caCert,

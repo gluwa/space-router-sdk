@@ -1,3 +1,16 @@
+// ---------------------------------------------------------------------------
+// Routing & filtering types
+// ---------------------------------------------------------------------------
+
+/** IP address type for filtering proxy nodes. */
+export type IpType = "residential" | "mobile" | "datacenter" | "business";
+
+/** Node operational status. */
+export type NodeStatus = "online" | "offline" | "draining";
+
+/** How a node connects to the network. */
+export type NodeConnectivityType = "direct" | "upnp" | "external_provider";
+
 /** Options for the {@link SpaceRouter} constructor. */
 export interface SpaceRouterOptions {
   /** Proxy gateway URL. Default: `"https://gateway.spacerouter.org:8080"` */
@@ -6,6 +19,8 @@ export interface SpaceRouterOptions {
   protocol?: "http" | "socks5";
   /** Region filter — 2-letter country code (ISO 3166-1 alpha-2, e.g. "US"). */
   region?: string;
+  /** IP type filter — restrict to a specific address type. */
+  ipType?: IpType;
   /** Request timeout in milliseconds. Default: `30_000` */
   timeout?: number;
   /** Coordination API URL (for auto-fetching the CA cert). */
@@ -42,6 +57,83 @@ export interface ApiKeyInfo {
   rate_limit_rpm: number;
   is_active: boolean;
   created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Node management
+// ---------------------------------------------------------------------------
+
+/** Registered proxy node returned by `POST /nodes` and `GET /nodes`. */
+export interface Node {
+  id: string;
+  endpoint_url: string;
+  public_ip: string;
+  connectivity_type: string;
+  node_type: string;
+  status: string;
+  health_score: number;
+  region: string;
+  label: string | null;
+  ip_type: string;
+  ip_region: string;
+  as_type: string;
+  wallet_address: string;
+  created_at: string;
+  gateway_ca_cert: string;
+}
+
+// ---------------------------------------------------------------------------
+// Staking registration
+// ---------------------------------------------------------------------------
+
+/** Challenge returned by `POST /nodes/register/challenge`. */
+export interface RegisterChallenge {
+  nonce: string;
+  expires_in: number;
+}
+
+/** Result of `POST /nodes/register/verify`. */
+export interface RegisterResult {
+  status: string;
+  node_id: string;
+  address: string;
+  endpoint_url: string;
+  gateway_ca_cert: string;
+}
+
+// ---------------------------------------------------------------------------
+// Billing
+// ---------------------------------------------------------------------------
+
+/** Checkout session returned by `POST /billing/checkout`. */
+export interface CheckoutSession {
+  checkout_url: string;
+}
+
+/** Reissued API key returned by `POST /billing/reissue`. */
+export interface BillingReissueResult {
+  new_api_key: string;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+/** Single data transfer record. */
+export interface Transfer {
+  request_id: string;
+  bytes: number;
+  method: string;
+  target_host: string;
+  created_at: string;
+}
+
+/** Paginated transfer list from `GET /dashboard/transfers`. */
+export interface TransferPage {
+  page: number;
+  total_pages: number;
+  total_bytes: number;
+  transfers: Transfer[];
 }
 
 /**

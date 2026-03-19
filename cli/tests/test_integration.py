@@ -1,10 +1,13 @@
 """Integration tests for the SpaceRouter CLI.
 
 These tests hit the **live** Coordination API and proxy gateway at
-``gateway.spacerouter.org``.  They are gated behind the ``SR_INTEGRATION``
-environment variable so they never run in normal CI:
+``gateway.spacerouter.org``.  They require the ``SR_API_KEY`` environment
+variable to be set to a billing-provisioned key:
 
-    SR_INTEGRATION=1 pytest tests/test_integration.py -v
+    SR_API_KEY=sr_live_xxx pytest tests/test_integration.py -v
+
+The CA certificate needed for proxy TLS verification is fetched
+automatically from the Coordination API's ``/ca-cert`` endpoint.
 """
 
 from __future__ import annotations
@@ -15,10 +18,7 @@ import os
 import pytest
 from typer.testing import CliRunner
 
-_RUN = os.environ.get("SR_INTEGRATION", "") == "1"
-pytestmark = pytest.mark.skipif(not _RUN, reason="SR_INTEGRATION not set")
-
-from spacerouter_cli.main import app  # noqa: E402
+from spacerouter_cli.main import app
 
 
 runner = CliRunner()
@@ -27,45 +27,32 @@ COORDINATION_URL = os.environ.get(
     "SR_COORDINATION_API_URL", "https://coordination.spacerouter.org"
 )
 GATEWAY_URL = os.environ.get(
-    "SR_GATEWAY_URL", "http://gateway.spacerouter.org:8080"
+    "SR_GATEWAY_URL", "https://gateway.spacerouter.org:8080"
 )
+
+# A billing-provisioned API key for proxy tests.
+API_KEY = os.environ.get("SR_API_KEY")
+
+pytestmark = pytest.mark.skipif(not API_KEY, reason="SR_API_KEY not set")
 
 
 class TestCLIIntegration:
-    """End-to-end: create key via CLI -> proxy request -> revoke."""
+    """End-to-end tests against the live Space Router infrastructure."""
 
-    def test_full_lifecycle(self):
-        # 1. Create an ephemeral API key via the CLI.
-        result = runner.invoke(app, [
-            "api-key", "create",
-            "--name", "integration-test-cli",
-            "--coordination-url", COORDINATION_URL,
-        ])
-        assert result.exit_code == 0, f"create failed: {result.output}"
+    def test_proxy_request(self):
+        """Proxy a GET request through the gateway with a billing-provisioned key."""
+        # No --ca-cert needed; the SDK auto-fetches from /ca-cert.
+        cmd = [
+            "request", "get", "https://httpbin.org/ip",
+            "--api-key", API_KEY,
+            "--gateway-url", GATEWAY_URL,
+        ]
+
+        result = runner.invoke(app, cmd)
+        assert result.exit_code == 0, f"request failed: {result.output}"
         data = json.loads(result.output)
-        api_key = data["api_key"]
-        key_id = data["id"]
-        assert api_key.startswith("sr_live_")
-
-        try:
-            # 2. Proxy a GET request through the gateway.
-            result = runner.invoke(app, [
-                "request", "get", "https://httpbin.org/ip",
-                "--api-key", api_key,
-                "--gateway-url", GATEWAY_URL,
-            ])
-            assert result.exit_code == 0, f"request failed: {result.output}"
-            data = json.loads(result.output)
-            assert data["status_code"] == 200
-            assert "origin" in data["body"]
-
-        finally:
-            # 3. Cleanup: revoke the key.
-            result = runner.invoke(app, [
-                "api-key", "revoke", key_id,
-                "--coordination-url", COORDINATION_URL,
-            ])
-            assert result.exit_code == 0
+        assert data["status_code"] == 200
+        assert "origin" in data["body"]
 
     def test_api_key_crud(self):
         """Create, list, and revoke an API key via CLI."""
@@ -96,3 +83,13 @@ class TestCLIIntegration:
                 "--coordination-url", COORDINATION_URL,
             ])
             assert result.exit_code == 0
+
+    def test_node_list(self):
+        """List nodes via CLI."""
+        result = runner.invoke(app, [
+            "node", "list",
+            "--coordination-url", COORDINATION_URL,
+        ])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)

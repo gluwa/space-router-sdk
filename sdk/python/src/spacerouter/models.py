@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from pydantic import BaseModel
+
+# ---------------------------------------------------------------------------
+# Routing & filtering types
+# ---------------------------------------------------------------------------
+
+IpType = Literal["residential", "mobile", "datacenter", "business"]
+"""IP address type for filtering proxy nodes."""
+
+NodeStatus = Literal["online", "offline", "draining"]
+"""Node operational status."""
+
+NodeConnectivityType = Literal["direct", "upnp", "external_provider"]
+"""How a node connects to the network."""
+
+# ---------------------------------------------------------------------------
+# API key models
+# ---------------------------------------------------------------------------
 
 
 class ApiKey(BaseModel):
@@ -32,6 +49,94 @@ class ApiKeyInfo(BaseModel):
     rate_limit_rpm: int
     is_active: bool
     created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Node management models
+# ---------------------------------------------------------------------------
+
+
+class Node(BaseModel):
+    """Registered proxy node returned by ``POST /nodes`` and ``GET /nodes``."""
+
+    id: str
+    endpoint_url: str
+    public_ip: str
+    connectivity_type: str
+    node_type: str
+    status: str
+    health_score: float
+    region: str
+    label: str | None = None
+    ip_type: str
+    ip_region: str
+    as_type: str
+    wallet_address: str
+    created_at: str
+    gateway_ca_cert: str
+
+
+# ---------------------------------------------------------------------------
+# Staking registration models
+# ---------------------------------------------------------------------------
+
+
+class RegisterChallenge(BaseModel):
+    """Challenge returned by ``POST /nodes/register/challenge``."""
+
+    nonce: str
+    expires_in: int
+
+
+class RegisterResult(BaseModel):
+    """Result of ``POST /nodes/register/verify``."""
+
+    status: str
+    node_id: str
+    address: str
+    endpoint_url: str
+    gateway_ca_cert: str
+
+
+# ---------------------------------------------------------------------------
+# Billing models
+# ---------------------------------------------------------------------------
+
+
+class CheckoutSession(BaseModel):
+    """Checkout session returned by ``POST /billing/checkout``."""
+
+    checkout_url: str
+
+
+class BillingReissueResult(BaseModel):
+    """Reissued API key returned by ``POST /billing/reissue``."""
+
+    new_api_key: str
+
+
+# ---------------------------------------------------------------------------
+# Dashboard models
+# ---------------------------------------------------------------------------
+
+
+class Transfer(BaseModel):
+    """Single data transfer record."""
+
+    request_id: str
+    bytes: int
+    method: str
+    target_host: str
+    created_at: str
+
+
+class TransferPage(BaseModel):
+    """Paginated transfer list from ``GET /dashboard/transfers``."""
+
+    page: int
+    total_pages: int
+    total_bytes: int
+    transfers: list[Transfer]
 
 
 class ProxyResponse:
