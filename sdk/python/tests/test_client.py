@@ -30,7 +30,9 @@ from spacerouter.models import ProxyResponse
 class TestBuildProxy:
     def test_http_default(self):
         result = _build_proxy("sr_live_abc", "http://gw:8080", "http", None)
-        assert result == "http://sr_live_abc:@gw:8080"
+        assert isinstance(result, httpx.Proxy)
+        assert str(result.url) == "http://gw:8080"
+        assert "proxy-authorization" in result.headers
 
     def test_socks5(self):
         result = _build_proxy("sr_live_abc", "socks5://gw:1080", "socks5", None)
@@ -38,7 +40,8 @@ class TestBuildProxy:
 
     def test_default_ports(self):
         result = _build_proxy("key", "http://gw", "http", None)
-        assert result == "http://key:@gw:8080"
+        assert isinstance(result, httpx.Proxy)
+        assert str(result.url) == "http://gw:8080"
 
         result = _build_proxy("key", "socks5://gw", "socks5", None)
         assert result == "socks5://key:@gw:1080"
@@ -47,9 +50,9 @@ class TestBuildProxy:
         result = _build_proxy("key", "http://gw:8080", "http", "US")
         assert isinstance(result, httpx.Proxy)
 
-    def test_without_routing_returns_string(self):
+    def test_without_routing_returns_proxy(self):
         result = _build_proxy("key", "http://gw:8080", "http", None)
-        assert isinstance(result, str)
+        assert isinstance(result, httpx.Proxy)
 
     def test_rejects_invalid_region(self):
         with pytest.raises(ValueError, match="2-letter country code"):
@@ -58,6 +61,18 @@ class TestBuildProxy:
             _build_proxy("key", "http://gw:8080", "http", "USA")
         with pytest.raises(ValueError, match="2-letter country code"):
             _build_proxy("key", "http://gw:8080", "http", "u")
+
+    def test_ip_type_header(self):
+        result = _build_proxy("key", "http://gw:8080", "http", None, "residential")
+        assert isinstance(result, httpx.Proxy)
+
+    def test_region_and_ip_type_headers(self):
+        result = _build_proxy("key", "http://gw:8080", "http", "US", "mobile")
+        assert isinstance(result, httpx.Proxy)
+
+    def test_no_ip_type_returns_proxy(self):
+        result = _build_proxy("key", "http://gw:8080", "http", None, None)
+        assert isinstance(result, httpx.Proxy)
 
 
 class TestValidateRegion:
@@ -326,6 +341,17 @@ class TestFetchCaCert:
         assert result is None
         _mock_ca_cert_fetch.start()
 
+    @respx.mock
+    def test_returns_none_on_404(self, _mock_ca_cert_fetch):
+        """404 means the endpoint was removed — treat as no custom CA."""
+        _mock_ca_cert_fetch.stop()
+        respx.get("https://coordination.spacerouter.org/ca-cert").mock(
+            return_value=httpx.Response(404)
+        )
+        result = fetch_ca_cert()
+        assert result is None
+        _mock_ca_cert_fetch.start()
+
 
 class TestBuildSslContext:
     def test_returns_ssl_context(self):
@@ -363,3 +389,30 @@ class TestCaCertIntegration:
             assert routed._ca_cert is None
             client.close()
             routed.close()
+
+
+# ---------------------------------------------------------------------------
+# IP-type routing
+# ---------------------------------------------------------------------------
+
+
+class TestIpTypeRouting:
+    def test_ip_type_stored(self):
+        client = SpaceRouter("sr_live_test", ip_type="residential")
+        assert client._ip_type == "residential"
+        client.close()
+
+    def test_with_routing_passes_ip_type(self):
+        client = SpaceRouter("sr_live_test")
+        routed = client.with_routing(ip_type="mobile")
+        assert routed._ip_type == "mobile"
+        client.close()
+        routed.close()
+
+    def test_with_routing_passes_both(self):
+        client = SpaceRouter("sr_live_test")
+        routed = client.with_routing(region="US", ip_type="datacenter")
+        assert routed._region == "US"
+        assert routed._ip_type == "datacenter"
+        client.close()
+        routed.close()

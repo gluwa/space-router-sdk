@@ -6,6 +6,7 @@ for routing HTTP requests through the Space Router residential proxy network.
 
 from __future__ import annotations
 
+import base64
 import ssl
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -41,9 +42,13 @@ def fetch_ca_cert(coordination_url: str = _DEFAULT_COORDINATION_URL) -> str | No
     """
     url = f"{coordination_url.rstrip('/')}/ca-cert"
     response = httpx.get(url, timeout=10.0)
-    if response.status_code == 503:
+    if response.status_code in (404, 503):
         return None
     response.raise_for_status()
+    # The endpoint returns JSON {"ca_cert": "<PEM>"} or raw PEM text.
+    content_type = response.headers.get("content-type", "")
+    if "json" in content_type:
+        return response.json()["ca_cert"]
     return response.text
 
 
@@ -51,6 +56,10 @@ def _build_ssl_context(ca_pem: str) -> ssl.SSLContext:
     """Build an SSL context that trusts both the system CAs and *ca_pem*."""
     ctx = ssl.create_default_context()
     ctx.load_verify_locations(cadata=ca_pem)
+    # Some proxy CAs lack the Authority Key Identifier extension, which
+    # Python 3.14+ rejects under its new VERIFY_X509_STRICT default.
+    if hasattr(ssl, "VERIFY_X509_STRICT"):
+        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
     return ctx
 
 
@@ -73,6 +82,7 @@ def _build_proxy(
     gateway_url: str,
     protocol: str,
     region: str | None,
+    ip_type: str | None = None,
 ) -> httpx.Proxy | str:
     """Build an httpx-compatible proxy specification with embedded credentials."""
     parsed = urlparse(gateway_url)
@@ -82,21 +92,29 @@ def _build_proxy(
     if protocol == "socks5":
         port = parsed.port or 1080
         proxy_url = f"socks5://{api_key}:@{host}:{port}"
-    else:
-        port = parsed.port or 8080
-        proxy_url = f"{scheme}://{api_key}:@{host}:{port}"
+        return proxy_url
+
+    port = parsed.port or 8080
+    proxy_url = f"{scheme}://{host}:{port}"
+
+    # Always send an explicit Proxy-Authorization header.  httpx stores
+    # URL-embedded credentials in ``raw_auth`` but httpcore may not
+    # convert them into a header on the CONNECT request.
+    token = base64.b64encode(f"{api_key}:".encode()).decode()
+    proxy_headers: dict[str, str] = {
+        "Proxy-Authorization": f"Basic {token}",
+    }
 
     # Routing headers must go on the proxy CONNECT request (not the tunnelled
     # request) so the gateway can read them for node selection.  httpx.Proxy
     # accepts a ``headers`` dict that is sent with every proxy negotiation.
-    proxy_headers: dict[str, str] = {}
     if region:
         _validate_region(region)
         proxy_headers["X-SpaceRouter-Region"] = region
+    if ip_type:
+        proxy_headers["X-SpaceRouter-IP-Type"] = ip_type
 
-    if proxy_headers:
-        return httpx.Proxy(proxy_url, headers=proxy_headers)
-    return proxy_url
+    return httpx.Proxy(proxy_url, headers=proxy_headers)
 
 
 def _check_proxy_errors(response: httpx.Response) -> None:
@@ -163,6 +181,7 @@ class SpaceRouter:
         gateway_url: str = _DEFAULT_HTTP_GATEWAY,
         protocol: Literal["http", "socks5"] = "http",
         region: str | None = None,
+        ip_type: str | None = None,
         timeout: float = 30.0,
         coordination_url: str = _DEFAULT_COORDINATION_URL,
         ca_cert: str | None = _UNSET,
@@ -172,6 +191,7 @@ class SpaceRouter:
         self._gateway_url = gateway_url
         self._protocol = protocol
         self._region = region
+        self._ip_type = ip_type
         self._timeout = timeout
         self._coordination_url = coordination_url
 
@@ -188,7 +208,7 @@ class SpaceRouter:
         else:
             self._ca_cert = ca_cert if ca_cert is not _UNSET else None
 
-        proxy = _build_proxy(api_key, gateway_url, protocol, region)
+        proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
         self._client = httpx.Client(
             proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
         )
@@ -225,6 +245,7 @@ class SpaceRouter:
         self,
         *,
         region: str | None = None,
+        ip_type: str | None = None,
     ) -> SpaceRouter:
         """Return a new client with different routing preferences."""
         return SpaceRouter(
@@ -232,6 +253,7 @@ class SpaceRouter:
             gateway_url=self._gateway_url,
             protocol=self._protocol,
             region=region,
+            ip_type=ip_type,
             timeout=self._timeout,
             coordination_url=self._coordination_url,
             ca_cert=self._ca_cert,
@@ -277,6 +299,7 @@ class AsyncSpaceRouter:
         gateway_url: str = _DEFAULT_HTTP_GATEWAY,
         protocol: Literal["http", "socks5"] = "http",
         region: str | None = None,
+        ip_type: str | None = None,
         timeout: float = 30.0,
         coordination_url: str = _DEFAULT_COORDINATION_URL,
         ca_cert: str | None = _UNSET,
@@ -286,6 +309,7 @@ class AsyncSpaceRouter:
         self._gateway_url = gateway_url
         self._protocol = protocol
         self._region = region
+        self._ip_type = ip_type
         self._timeout = timeout
         self._coordination_url = coordination_url
 
@@ -301,7 +325,7 @@ class AsyncSpaceRouter:
         else:
             self._ca_cert = ca_cert if ca_cert is not _UNSET else None
 
-        proxy = _build_proxy(api_key, gateway_url, protocol, region)
+        proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
         self._client = httpx.AsyncClient(
             proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
         )
@@ -338,6 +362,7 @@ class AsyncSpaceRouter:
         self,
         *,
         region: str | None = None,
+        ip_type: str | None = None,
     ) -> AsyncSpaceRouter:
         """Return a new client with different routing preferences."""
         return AsyncSpaceRouter(
@@ -345,6 +370,7 @@ class AsyncSpaceRouter:
             gateway_url=self._gateway_url,
             protocol=self._protocol,
             region=region,
+            ip_type=ip_type,
             timeout=self._timeout,
             coordination_url=self._coordination_url,
             ca_cert=self._ca_cert,

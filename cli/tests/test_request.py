@@ -185,3 +185,40 @@ class TestRegion:
         mock_sr_cls.assert_called_once()
         call_kwargs = mock_sr_cls.call_args
         assert call_kwargs[1]["region"] == "US"
+
+
+class TestIpType:
+    @patch("spacerouter_cli.commands.request.SpaceRouter")
+    def test_passes_ip_type(self, mock_sr_cls, runner, cli_env):
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.request.return_value = _mock_proxy_response()
+        mock_sr_cls.return_value = mock_client
+
+        result = runner.invoke(app, [
+            "request", "get", "http://example.com",
+            "--ip-type", "residential",
+        ])
+        assert result.exit_code == 0
+        mock_sr_cls.assert_called_once()
+        call_kwargs = mock_sr_cls.call_args
+        assert call_kwargs[1]["ip_type"] == "residential"
+
+    @patch("spacerouter_cli.commands.request.SpaceRouter")
+    def test_passes_region_and_ip_type(self, mock_sr_cls, runner, cli_env):
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.request.return_value = _mock_proxy_response()
+        mock_sr_cls.return_value = mock_client
+
+        result = runner.invoke(app, [
+            "request", "get", "http://example.com",
+            "--region", "US",
+            "--ip-type", "mobile",
+        ])
+        assert result.exit_code == 0
+        call_kwargs = mock_sr_cls.call_args
+        assert call_kwargs[1]["region"] == "US"
+        assert call_kwargs[1]["ip_type"] == "mobile"

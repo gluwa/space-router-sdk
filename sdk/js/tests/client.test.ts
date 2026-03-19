@@ -285,6 +285,53 @@ describe("SpaceRouter", () => {
     routed.close();
   });
 
+  it("withRouting accepts ipType", () => {
+    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const routed = client.withRouting({ ipType: "residential" });
+    expect(routed).not.toBe(client);
+    client.close();
+    routed.close();
+  });
+
+  it("injects IP-type header", async () => {
+    const client = new SpaceRouter("sr_live_test", {
+      ipType: "residential",
+      caCert: null,
+    });
+
+    await client.get("http://example.com");
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const callArgs = fetchSpy.mock.calls[0];
+    const headers = callArgs[1].headers;
+    expect(headers["X-SpaceRouter-IP-Type"]).toBe("residential");
+    client.close();
+  });
+
+  it("does not inject IP-type header when unset", async () => {
+    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    await client.get("http://example.com");
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers["X-SpaceRouter-IP-Type"]).toBeUndefined();
+    client.close();
+  });
+
+  it("injects both region and IP-type headers", async () => {
+    const client = new SpaceRouter("sr_live_test", {
+      region: "US",
+      ipType: "mobile",
+      caCert: null,
+    });
+
+    await client.get("http://example.com");
+
+    const headers = fetchSpy.mock.calls[0][1].headers;
+    expect(headers["X-SpaceRouter-Region"]).toBe("US");
+    expect(headers["X-SpaceRouter-IP-Type"]).toBe("mobile");
+    client.close();
+  });
+
   it("rejects invalid region", () => {
     expect(() => new SpaceRouter("sr_live_test", { region: "Seoul, KR" })).toThrow(
       "2-letter country code",
@@ -372,6 +419,13 @@ describe("fetchCaCert", () => {
 
   it("returns null on 503", async () => {
     fetchSpy.mockResolvedValue(new Response(null, { status: 503 }));
+
+    const result = await fetchCaCert();
+    expect(result).toBeNull();
+  });
+
+  it("returns null on 404 (endpoint removed)", async () => {
+    fetchSpy.mockResolvedValue(new Response(null, { status: 404 }));
 
     const result = await fetchCaCert();
     expect(result).toBeNull();

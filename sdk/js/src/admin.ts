@@ -4,7 +4,18 @@
  * Manages API keys via the Coordination API (`/api-keys` endpoints).
  */
 
-import type { ApiKey, ApiKeyInfo, SpaceRouterAdminOptions } from "./models.js";
+import type {
+  ApiKey,
+  ApiKeyInfo,
+  BillingReissueResult,
+  CheckoutSession,
+  Node,
+  NodeStatus,
+  RegisterChallenge,
+  RegisterResult,
+  SpaceRouterAdminOptions,
+  TransferPage,
+} from "./models.js";
 
 const DEFAULT_COORDINATION_URL = "https://coordination.spacerouter.org";
 const DEFAULT_TIMEOUT = 10_000;
@@ -88,13 +99,201 @@ export class SpaceRouterAdmin {
    */
   async fetchCaCert(): Promise<string | null> {
     const response = await this._fetch("/ca-cert", { method: "GET" });
-    if (response.status === 503) return null;
+    if (response.status === 404 || response.status === 503) return null;
     if (!response.ok) {
       throw new Error(
         `Failed to fetch CA cert: ${response.status} ${response.statusText}`,
       );
     }
     return response.text();
+  }
+
+  // -- Node management ------------------------------------------------------
+
+  /** Register a new proxy node. */
+  async registerNode(params: {
+    endpoint_url: string;
+    wallet_address: string;
+    label?: string;
+    connectivity_type?: string;
+  }): Promise<Node> {
+    const response = await this._fetch("/nodes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to register node: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return (await response.json()) as Node;
+  }
+
+  /** List all registered nodes. */
+  async listNodes(): Promise<Node[]> {
+    const response = await this._fetch("/nodes", { method: "GET" });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to list nodes: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return (await response.json()) as Node[];
+  }
+
+  /** Update a node's operational status. */
+  async updateNodeStatus(nodeId: string, status: NodeStatus): Promise<void> {
+    const response = await this._fetch(`/nodes/${nodeId}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to update node status: ${response.status} ${response.statusText}`,
+      );
+    }
+  }
+
+  /** Delete a registered node. */
+  async deleteNode(nodeId: string): Promise<void> {
+    const response = await this._fetch(`/nodes/${nodeId}`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to delete node: ${response.status} ${response.statusText}`,
+      );
+    }
+  }
+
+  // -- Staking registration -------------------------------------------------
+
+  /** Request a signing challenge for Creditcoin staking registration. */
+  async getRegisterChallenge(address: string): Promise<RegisterChallenge> {
+    const response = await this._fetch("/nodes/register/challenge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to get register challenge: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return (await response.json()) as RegisterChallenge;
+  }
+
+  /** Verify a signed nonce and register the node via staking. */
+  async verifyAndRegister(params: {
+    address: string;
+    endpoint_url: string;
+    signed_nonce: string;
+    label?: string;
+  }): Promise<RegisterResult> {
+    const response = await this._fetch("/nodes/register/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to verify and register: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return (await response.json()) as RegisterResult;
+  }
+
+  // -- Billing --------------------------------------------------------------
+
+  /** Create a Stripe checkout session. */
+  async createCheckout(email: string): Promise<CheckoutSession> {
+    const response = await this._fetch("/billing/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to create checkout: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return (await response.json()) as CheckoutSession;
+  }
+
+  /** Verify an email address with a token. */
+  async verifyEmail(token: string): Promise<void> {
+    const response = await this._fetch(
+      `/billing/verify?token=${encodeURIComponent(token)}`,
+      { method: "GET" },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to verify email: ${response.status} ${response.statusText}`,
+      );
+    }
+  }
+
+  /** Reissue an API key using email verification. */
+  async reissueApiKey(params: {
+    email: string;
+    token: string;
+  }): Promise<BillingReissueResult> {
+    const response = await this._fetch("/billing/reissue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to reissue API key: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return (await response.json()) as BillingReissueResult;
+  }
+
+  // -- Dashboard ------------------------------------------------------------
+
+  /** Get paginated data transfer history. */
+  async getTransfers(params: {
+    wallet_address: string;
+    page?: number;
+    page_size?: number;
+  }): Promise<TransferPage> {
+    const query = new URLSearchParams({
+      wallet_address: params.wallet_address,
+    });
+    if (params.page != null) query.set("page", String(params.page));
+    if (params.page_size != null)
+      query.set("page_size", String(params.page_size));
+
+    const response = await this._fetch(
+      `/dashboard/transfers?${query.toString()}`,
+      { method: "GET" },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to get transfers: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return (await response.json()) as TransferPage;
   }
 
   /** Close — no-op, included for API symmetry with SpaceRouter. */
