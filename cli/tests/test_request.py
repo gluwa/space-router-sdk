@@ -13,19 +13,15 @@ def _mock_proxy_response(
     status_code: int = 200,
     text: str = '{"origin": "73.162.1.1"}',
     headers: dict | None = None,
-    node_id: str | None = "node-1",
     request_id: str | None = "req-1",
 ):
     resp = MagicMock()
     resp.status_code = status_code
     resp.text = text
     all_headers = dict(headers or {})
-    if node_id:
-        all_headers["x-spacerouter-node"] = node_id
     if request_id:
         all_headers["x-spacerouter-request-id"] = request_id
     resp.headers = all_headers
-    resp.node_id = node_id
     resp.request_id = request_id
     return resp
 
@@ -49,7 +45,6 @@ class TestGet:
         assert result.exit_code == 0
         data = parse_json_output(result.output)
         assert data["status_code"] == 200
-        assert data["spacerouter"]["node_id"] == "node-1"
         assert data["spacerouter"]["request_id"] == "req-1"
         assert data["body"]["origin"] == "73.162.1.1"
 

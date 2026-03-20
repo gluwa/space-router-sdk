@@ -31,14 +31,6 @@ function makeResponse(
 // ---------------------------------------------------------------------------
 
 describe("ProxyResponse", () => {
-  it("exposes nodeId from header", () => {
-    const raw = makeResponse(200, {
-      headers: { "x-spacerouter-node": "node-1" },
-    });
-    const resp = new ProxyResponse(raw);
-    expect(resp.nodeId).toBe("node-1");
-  });
-
   it("exposes requestId from header", () => {
     const raw = makeResponse(200, {
       headers: { "x-spacerouter-request-id": "req-1" },
@@ -50,7 +42,6 @@ describe("ProxyResponse", () => {
   it("returns undefined when headers missing", () => {
     const raw = makeResponse(200);
     const resp = new ProxyResponse(raw);
-    expect(resp.nodeId).toBeUndefined();
     expect(resp.requestId).toBeUndefined();
   });
 
@@ -160,11 +151,10 @@ describe("proxy error checking", () => {
     client.close();
   });
 
-  it("502 throws UpstreamError with nodeId", async () => {
+  it("502 throws UpstreamError", async () => {
     fetchSpy.mockResolvedValue(
       makeResponse(502, {
         headers: {
-          "x-spacerouter-node": "node-abc",
           "x-spacerouter-request-id": "req-3",
         },
       }),
@@ -175,7 +165,7 @@ describe("proxy error checking", () => {
       await client.get("http://example.com");
     } catch (e) {
       expect(e).toBeInstanceOf(UpstreamError);
-      expect((e as UpstreamError).nodeId).toBe("node-abc");
+      expect((e as UpstreamError).requestId).toBe("req-3");
     }
     client.close();
   });
@@ -211,7 +201,6 @@ describe("proxy error checking", () => {
     fetchSpy.mockResolvedValue(
       makeResponse(200, {
         headers: {
-          "x-spacerouter-node": "node-1",
           "x-spacerouter-request-id": "req-ok",
         },
       }),
@@ -220,7 +209,6 @@ describe("proxy error checking", () => {
     const client = new SpaceRouter("sr_live_test", { caCert: null });
     const resp = await client.get("http://example.com");
     expect(resp.status).toBe(200);
-    expect(resp.nodeId).toBe("node-1");
     expect(resp.requestId).toBe("req-ok");
     client.close();
   });

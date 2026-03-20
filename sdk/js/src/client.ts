@@ -143,10 +143,7 @@ async function checkProxyErrors(response: Response): Promise<void> {
   }
 
   if (response.status === 502) {
-    const nodeId =
-      response.headers.get("x-spacerouter-node") ?? undefined;
     throw new UpstreamError("Target unreachable via residential node", {
-      nodeId,
       statusCode: 502,
       requestId,
     });

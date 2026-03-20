@@ -112,7 +112,6 @@ def _do_request(
             "headers": dict(resp.headers),
             "body": _try_parse_json(resp.text),
             "spacerouter": {
-                "node_id": resp.node_id,
                 "request_id": resp.request_id,
             },
         })

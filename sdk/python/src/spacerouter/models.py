@@ -150,11 +150,6 @@ class ProxyResponse:
         self._response = response
 
     @property
-    def node_id(self) -> str | None:
-        """Node that handled the request (``X-SpaceRouter-Node``)."""
-        return self._response.headers.get("x-spacerouter-node")
-
-    @property
     def request_id(self) -> str | None:
         """Unique request ID for tracing (``X-SpaceRouter-Request-Id``)."""
         return self._response.headers.get("x-spacerouter-request-id")

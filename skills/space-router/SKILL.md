@@ -110,7 +110,6 @@ Space Router adds these headers to proxied responses:
 
 | Header | Meaning |
 |---|---|
-| `X-SpaceRouter-Node` | ID of the residential node that served the request |
 | `X-SpaceRouter-Request-Id` | Unique request ID for debugging |
 
 ## Error Handling

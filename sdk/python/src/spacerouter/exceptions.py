@@ -48,14 +48,3 @@ class NoNodesAvailableError(SpaceRouterError):
 
 class UpstreamError(SpaceRouterError):
     """502 Bad Gateway — target unreachable via residential node."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        node_id: str | None = None,
-        status_code: int | None = 502,
-        request_id: str | None = None,
-    ) -> None:
-        super().__init__(message, status_code=status_code, request_id=request_id)
-        self.node_id = node_id

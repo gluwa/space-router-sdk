@@ -149,11 +149,6 @@ export class ProxyResponse {
     this._response = response;
   }
 
-  /** Node that handled the request (`X-SpaceRouter-Node`). */
-  get nodeId(): string | undefined {
-    return this._response.headers.get("x-spacerouter-node") ?? undefined;
-  }
-
   /** Unique request ID for tracing (`X-SpaceRouter-Request-Id`). */
   get requestId(): string | undefined {
     return this._response.headers.get("x-spacerouter-request-id") ?? undefined;

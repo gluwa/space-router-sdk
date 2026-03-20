@@ -62,14 +62,11 @@ export class NoNodesAvailableError extends SpaceRouterError {
 
 /** 502 Bad Gateway — target unreachable via residential node. */
 export class UpstreamError extends SpaceRouterError {
-  readonly nodeId: string | undefined;
-
   constructor(
     message: string,
-    options?: { nodeId?: string; statusCode?: number; requestId?: string },
+    options?: { statusCode?: number; requestId?: string },
   ) {
     super(message, options);
     this.name = "UpstreamError";
-    this.nodeId = options?.nodeId;
   }
 }

@@ -70,7 +70,6 @@ def cli_error_handler(func):
             print_error(
                 "upstream_error",
                 str(e),
-                node_id=e.node_id,
                 status_code=e.status_code,
                 request_id=e.request_id,
             )

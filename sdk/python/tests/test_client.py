@@ -132,13 +132,12 @@ class TestCheckProxyErrors:
         resp = self._make_response(
             502,
             headers={
-                "x-spacerouter-node": "node-abc",
                 "x-spacerouter-request-id": "req-3",
             },
         )
         with pytest.raises(UpstreamError) as exc_info:
             _check_proxy_errors(resp)
-        assert exc_info.value.node_id == "node-abc"
+        assert exc_info.value.request_id == "req-3"
 
     def test_503_no_nodes(self):
         resp = self._make_response(
@@ -169,11 +168,6 @@ class TestCheckProxyErrors:
 
 
 class TestProxyResponse:
-    def test_node_id(self):
-        raw = httpx.Response(200, headers={"x-spacerouter-node": "n-1"})
-        resp = ProxyResponse(raw)
-        assert resp.node_id == "n-1"
-
     def test_request_id(self):
         raw = httpx.Response(200, headers={"x-spacerouter-request-id": "r-1"})
         resp = ProxyResponse(raw)
@@ -182,7 +176,6 @@ class TestProxyResponse:
     def test_missing_headers_return_none(self):
         raw = httpx.Response(200)
         resp = ProxyResponse(raw)
-        assert resp.node_id is None
         assert resp.request_id is None
 
     def test_delegates_status_code(self):
@@ -246,7 +239,6 @@ class TestSpaceRouter:
                 200,
                 text="ok",
                 headers={
-                    "x-spacerouter-node": "node-1",
                     "x-spacerouter-request-id": "req-1",
                 },
             )
@@ -255,7 +247,6 @@ class TestSpaceRouter:
             resp = client.get("http://example.com/")
             assert resp.status_code == 200
             assert resp.text == "ok"
-            assert resp.node_id == "node-1"
             assert resp.request_id == "req-1"
 
     @respx.mock

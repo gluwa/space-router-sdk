@@ -138,10 +138,8 @@ def _check_proxy_errors(response: httpx.Response) -> None:
         )
 
     if response.status_code == 502:
-        node_id = response.headers.get("x-spacerouter-node")
         raise UpstreamError(
             "Target unreachable via residential node",
-            node_id=node_id,
             status_code=502,
             request_id=request_id,
         )
