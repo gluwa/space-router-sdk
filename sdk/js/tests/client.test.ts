@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   SpaceRouter,
-  fetchCaCert,
   ProxyResponse,
   AuthenticationError,
   RateLimitError,
@@ -103,7 +102,7 @@ describe("proxy error checking", () => {
       }),
     );
 
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     await expect(client.get("http://example.com")).rejects.toThrow(
       AuthenticationError,
     );
@@ -128,7 +127,7 @@ describe("proxy error checking", () => {
       }),
     );
 
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     try {
       await client.get("http://example.com");
     } catch (e) {
@@ -142,7 +141,7 @@ describe("proxy error checking", () => {
   it("429 defaults retryAfter to 60", async () => {
     fetchSpy.mockResolvedValue(makeResponse(429));
 
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     try {
       await client.get("http://example.com");
     } catch (e) {
@@ -160,7 +159,7 @@ describe("proxy error checking", () => {
       }),
     );
 
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     try {
       await client.get("http://example.com");
     } catch (e) {
@@ -177,7 +176,7 @@ describe("proxy error checking", () => {
       }),
     );
 
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     await expect(client.get("http://example.com")).rejects.toThrow(
       NoNodesAvailableError,
     );
@@ -191,7 +190,7 @@ describe("proxy error checking", () => {
       }),
     );
 
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     const resp = await client.get("http://example.com");
     expect(resp.status).toBe(503);
     client.close();
@@ -206,7 +205,7 @@ describe("proxy error checking", () => {
       }),
     );
 
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     const resp = await client.get("http://example.com");
     expect(resp.status).toBe(200);
     expect(resp.requestId).toBe("req-ok");
@@ -216,7 +215,7 @@ describe("proxy error checking", () => {
   it("404 from target passes through", async () => {
     fetchSpy.mockResolvedValue(makeResponse(404));
 
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     const resp = await client.get("http://example.com");
     expect(resp.status).toBe(404);
     client.close();
@@ -240,7 +239,7 @@ describe("SpaceRouter", () => {
   });
 
   it("defaults to HTTP protocol", () => {
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     expect(client.toString()).toContain("protocol=http");
     client.close();
   });
@@ -249,7 +248,7 @@ describe("SpaceRouter", () => {
     const client = new SpaceRouter("sr_live_test", {
       protocol: "socks5",
       gatewayUrl: "socks5://gw:1080",
-      caCert: null,
+
     });
     expect(client.toString()).toContain("protocol=socks5");
     client.close();
@@ -258,14 +257,14 @@ describe("SpaceRouter", () => {
   it("toString includes gateway url", () => {
     const client = new SpaceRouter("sr_live_test", {
       gatewayUrl: "http://gw:8080",
-      caCert: null,
+
     });
     expect(client.toString()).toContain("http://gw:8080");
     client.close();
   });
 
   it("withRouting returns new client", () => {
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     const routed = client.withRouting({ region: "KR" });
     expect(routed).not.toBe(client);
     expect(routed.toString()).toContain("protocol=http");
@@ -274,7 +273,7 @@ describe("SpaceRouter", () => {
   });
 
   it("withRouting accepts ipType", () => {
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     const routed = client.withRouting({ ipType: "residential" });
     expect(routed).not.toBe(client);
     client.close();
@@ -284,7 +283,7 @@ describe("SpaceRouter", () => {
   it("injects IP-type header", async () => {
     const client = new SpaceRouter("sr_live_test", {
       ipType: "residential",
-      caCert: null,
+
     });
 
     await client.get("http://example.com");
@@ -297,7 +296,7 @@ describe("SpaceRouter", () => {
   });
 
   it("does not inject IP-type header when unset", async () => {
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     await client.get("http://example.com");
 
     const headers = fetchSpy.mock.calls[0][1].headers;
@@ -309,7 +308,7 @@ describe("SpaceRouter", () => {
     const client = new SpaceRouter("sr_live_test", {
       region: "US",
       ipType: "mobile",
-      caCert: null,
+
     });
 
     await client.get("http://example.com");
@@ -335,7 +334,7 @@ describe("SpaceRouter", () => {
   it("injects routing headers", async () => {
     const client = new SpaceRouter("sr_live_test", {
       region: "US",
-      caCert: null,
+
     });
 
     await client.get("http://example.com");
@@ -348,7 +347,7 @@ describe("SpaceRouter", () => {
   });
 
   it("does not inject routing headers when unset", async () => {
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     await client.get("http://example.com");
 
     const headers = fetchSpy.mock.calls[0][1].headers;
@@ -357,7 +356,7 @@ describe("SpaceRouter", () => {
   });
 
   it("post passes body", async () => {
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     const body = JSON.stringify({ key: "value" });
     await client.post("http://example.com/data", { body });
 
@@ -367,7 +366,7 @@ describe("SpaceRouter", () => {
   });
 
   it("passes custom headers", async () => {
-    const client = new SpaceRouter("sr_live_test", { caCert: null });
+    const client = new SpaceRouter("sr_live_test");
     await client.get("http://example.com", {
       headers: { "X-Custom": "value" },
     });
@@ -378,74 +377,3 @@ describe("SpaceRouter", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// fetchCaCert
-// ---------------------------------------------------------------------------
-
-describe("fetchCaCert", () => {
-  let fetchSpy: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("returns PEM on 200", async () => {
-    const pem = "-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----";
-    fetchSpy.mockResolvedValue(new Response(pem, { status: 200 }));
-
-    const result = await fetchCaCert();
-    expect(result).toBe(pem);
-    expect(fetchSpy.mock.calls[0][0]).toBe(
-      "https://coordination.spacerouter.org/ca-cert",
-    );
-  });
-
-  it("returns null on 503", async () => {
-    fetchSpy.mockResolvedValue(new Response(null, { status: 503 }));
-
-    const result = await fetchCaCert();
-    expect(result).toBeNull();
-  });
-
-  it("returns null on 404 (endpoint removed)", async () => {
-    fetchSpy.mockResolvedValue(new Response(null, { status: 404 }));
-
-    const result = await fetchCaCert();
-    expect(result).toBeNull();
-  });
-
-  it("throws on other errors", async () => {
-    fetchSpy.mockResolvedValue(new Response(null, { status: 500 }));
-
-    await expect(fetchCaCert()).rejects.toThrow("Failed to fetch CA cert");
-  });
-
-  it("uses custom coordination URL", async () => {
-    fetchSpy.mockResolvedValue(new Response("PEM", { status: 200 }));
-
-    await fetchCaCert("http://custom:9000");
-    expect(fetchSpy.mock.calls[0][0]).toBe("http://custom:9000/ca-cert");
-  });
-
-  it("lazy fetch on first request when caCert not set", async () => {
-    // First call returns the CA cert PEM, second call returns the actual response
-    const pem = "-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----";
-    fetchSpy
-      .mockResolvedValueOnce(new Response(pem, { status: 200 })) // CA cert fetch
-      .mockResolvedValueOnce(makeResponse(200));                   // actual request
-
-    const client = new SpaceRouter("sr_live_test"); // no caCert → lazy fetch
-    await client.get("http://example.com");
-
-    // Two fetch calls: one for CA cert, one for the actual request
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(fetchSpy.mock.calls[0][0]).toContain("/ca-cert");
-    expect(fetchSpy.mock.calls[1][0]).toBe("http://example.com");
-    client.close();
-  });
-});

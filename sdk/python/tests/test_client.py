@@ -1,8 +1,5 @@
 """Tests for the SpaceRouter proxy client."""
 
-import ssl
-from unittest.mock import patch
-
 import httpx
 import pytest
 import respx
@@ -10,9 +7,8 @@ import respx
 from spacerouter import (
     AsyncSpaceRouter,
     SpaceRouter,
-    fetch_ca_cert,
 )
-from spacerouter.client import _build_proxy, _build_ssl_context, _check_proxy_errors, _validate_region
+from spacerouter.client import _build_proxy, _check_proxy_errors, _validate_region
 from spacerouter.exceptions import (
     AuthenticationError,
     NoNodesAvailableError,
@@ -299,87 +295,6 @@ class TestAsyncSpaceRouter:
             with pytest.raises(RateLimitError) as exc_info:
                 await client.get("http://example.com/")
             assert exc_info.value.retry_after == 10
-
-
-# ---------------------------------------------------------------------------
-# fetch_ca_cert & SSL context
-# ---------------------------------------------------------------------------
-
-
-class TestFetchCaCert:
-    """Tests for fetch_ca_cert.  The conftest autouse fixture is active, so
-    we re-patch explicitly here to test the *real* function behaviour."""
-
-    @respx.mock
-    def test_returns_pem_on_200(self, _mock_ca_cert_fetch):
-        """Undo the conftest mock so we can test the real function."""
-        _mock_ca_cert_fetch.stop()
-        pem = "-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----"
-        respx.get("https://coordination.spacerouter.org/ca-cert").mock(
-            return_value=httpx.Response(200, text=pem)
-        )
-        result = fetch_ca_cert()
-        assert result == pem
-        _mock_ca_cert_fetch.start()
-
-    @respx.mock
-    def test_returns_none_on_503(self, _mock_ca_cert_fetch):
-        _mock_ca_cert_fetch.stop()
-        respx.get("https://coordination.spacerouter.org/ca-cert").mock(
-            return_value=httpx.Response(503)
-        )
-        result = fetch_ca_cert()
-        assert result is None
-        _mock_ca_cert_fetch.start()
-
-    @respx.mock
-    def test_returns_none_on_404(self, _mock_ca_cert_fetch):
-        """404 means the endpoint was removed — treat as no custom CA."""
-        _mock_ca_cert_fetch.stop()
-        respx.get("https://coordination.spacerouter.org/ca-cert").mock(
-            return_value=httpx.Response(404)
-        )
-        result = fetch_ca_cert()
-        assert result is None
-        _mock_ca_cert_fetch.start()
-
-
-class TestBuildSslContext:
-    def test_returns_ssl_context(self):
-        import subprocess
-
-        # Generate a real self-signed cert via openssl
-        result = subprocess.run(
-            [
-                "openssl", "req", "-x509", "-newkey", "rsa:2048",
-                "-keyout", "/dev/null", "-out", "/dev/stdout",
-                "-days", "1", "-nodes", "-subj", "/CN=test-ca",
-            ],
-            capture_output=True, text=True,
-        )
-        assert result.returncode == 0, f"openssl failed: {result.stderr}"
-        pem = result.stdout
-        ctx = _build_ssl_context(pem)
-        assert isinstance(ctx, ssl.SSLContext)
-
-
-class TestCaCertIntegration:
-    def test_explicit_ca_cert_skips_fetch(self):
-        """Passing ``ca_cert=None`` explicitly should not call fetch_ca_cert."""
-        with patch("spacerouter.client.fetch_ca_cert") as mock:
-            client = SpaceRouter("sr_live_test", ca_cert=None)
-            mock.assert_not_called()
-            client.close()
-
-    def test_with_routing_reuses_cached_cert(self):
-        """with_routing should pass through the cached cert, not re-fetch."""
-        with patch("spacerouter.client.fetch_ca_cert") as mock:
-            client = SpaceRouter("sr_live_test", ca_cert=None)
-            routed = client.with_routing(region="KR")
-            mock.assert_not_called()
-            assert routed._ca_cert is None
-            client.close()
-            routed.close()
 
 
 # ---------------------------------------------------------------------------

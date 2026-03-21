@@ -7,7 +7,6 @@ for routing HTTP requests through the Space Router residential proxy network.
 from __future__ import annotations
 
 import base64
-import ssl
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -22,49 +21,6 @@ from spacerouter.exceptions import (
 from spacerouter.models import ProxyResponse
 
 _DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org:8080"
-_DEFAULT_SOCKS5_GATEWAY = "socks5://gateway.spacerouter.org:1080"
-_DEFAULT_COORDINATION_URL = "https://coordination.spacerouter.org"
-
-
-# ---------------------------------------------------------------------------
-# CA certificate helpers
-# ---------------------------------------------------------------------------
-
-
-def fetch_ca_cert(coordination_url: str = _DEFAULT_COORDINATION_URL) -> str | None:
-    """Fetch the proxy network CA certificate from the Coordination API.
-
-    The proxy network may re-sign target-site TLS certificates with its own
-    CA.  This function retrieves that CA so the SDK can trust it.
-
-    Returns the PEM-encoded certificate string, or ``None`` when the
-    coordination API indicates that no special CA is needed (HTTP 503).
-    """
-    url = f"{coordination_url.rstrip('/')}/ca-cert"
-    response = httpx.get(url, timeout=10.0)
-    if response.status_code in (404, 503):
-        return None
-    response.raise_for_status()
-    # The endpoint returns JSON {"ca_cert": "<PEM>"} or raw PEM text.
-    content_type = response.headers.get("content-type", "")
-    if "json" in content_type:
-        return response.json()["ca_cert"]
-    return response.text
-
-
-def _build_ssl_context(ca_pem: str) -> ssl.SSLContext:
-    """Build an SSL context that trusts both the system CAs and *ca_pem*."""
-    ctx = ssl.create_default_context()
-    ctx.load_verify_locations(cadata=ca_pem)
-    # Some proxy CAs lack the Authority Key Identifier extension, which
-    # Python 3.14+ rejects under its new VERIFY_X509_STRICT default.
-    if hasattr(ssl, "VERIFY_X509_STRICT"):
-        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
-    return ctx
-
-
-# Sentinel distinguishing "not provided" from an explicit ``None``.
-_UNSET: Any = type("_Unset", (), {"__repr__": lambda self: "<UNSET>"})()
 
 _REGION_RE = __import__("re").compile(r"^[A-Z]{2}$")
 
@@ -181,8 +137,6 @@ class SpaceRouter:
         region: str | None = None,
         ip_type: str | None = None,
         timeout: float = 30.0,
-        coordination_url: str = _DEFAULT_COORDINATION_URL,
-        ca_cert: str | None = _UNSET,
         **httpx_kwargs: Any,
     ) -> None:
         self._api_key = api_key
@@ -191,21 +145,8 @@ class SpaceRouter:
         self._region = region
         self._ip_type = ip_type
         self._timeout = timeout
-        self._coordination_url = coordination_url
 
-        # Resolve TLS verification.
-        # Priority: explicit ``verify`` kwarg > ``ca_cert`` param > auto-fetch.
-        verify = httpx_kwargs.pop("verify", None)
-        if verify is None:
-            if ca_cert is _UNSET:
-                pem = fetch_ca_cert(coordination_url)
-            else:
-                pem = ca_cert
-            self._ca_cert = pem
-            verify = _build_ssl_context(pem) if pem else True
-        else:
-            self._ca_cert = ca_cert if ca_cert is not _UNSET else None
-
+        verify = httpx_kwargs.pop("verify", True)
         proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
         self._client = httpx.Client(
             proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
@@ -253,8 +194,6 @@ class SpaceRouter:
             region=region,
             ip_type=ip_type,
             timeout=self._timeout,
-            coordination_url=self._coordination_url,
-            ca_cert=self._ca_cert,
         )
 
     # -- Lifecycle ----------------------------------------------------------
@@ -299,8 +238,6 @@ class AsyncSpaceRouter:
         region: str | None = None,
         ip_type: str | None = None,
         timeout: float = 30.0,
-        coordination_url: str = _DEFAULT_COORDINATION_URL,
-        ca_cert: str | None = _UNSET,
         **httpx_kwargs: Any,
     ) -> None:
         self._api_key = api_key
@@ -309,20 +246,8 @@ class AsyncSpaceRouter:
         self._region = region
         self._ip_type = ip_type
         self._timeout = timeout
-        self._coordination_url = coordination_url
 
-        # Resolve TLS verification (same logic as sync client).
-        verify = httpx_kwargs.pop("verify", None)
-        if verify is None:
-            if ca_cert is _UNSET:
-                pem = fetch_ca_cert(coordination_url)
-            else:
-                pem = ca_cert
-            self._ca_cert = pem
-            verify = _build_ssl_context(pem) if pem else True
-        else:
-            self._ca_cert = ca_cert if ca_cert is not _UNSET else None
-
+        verify = httpx_kwargs.pop("verify", True)
         proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
         self._client = httpx.AsyncClient(
             proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
@@ -370,8 +295,6 @@ class AsyncSpaceRouter:
             region=region,
             ip_type=ip_type,
             timeout=self._timeout,
-            coordination_url=self._coordination_url,
-            ca_cert=self._ca_cert,
         )
 
     # -- Lifecycle ----------------------------------------------------------

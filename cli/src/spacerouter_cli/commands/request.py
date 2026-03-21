@@ -21,7 +21,6 @@ GatewayOpt = Annotated[Optional[str], typer.Option("--gateway-url", help="Proxy 
 HeaderOpt = Annotated[Optional[list[str]], typer.Option("--header", "-H", help="Custom header (Name: Value). Repeatable.")]
 RegionOpt = Annotated[Optional[str], typer.Option("--region", help="2-letter country code (e.g. US, KR).")]
 IpTypeOpt = Annotated[Optional[str], typer.Option("--ip-type", help="IP type filter: residential, mobile, datacenter, business.")]
-CaCertOpt = Annotated[Optional[str], typer.Option("--ca-cert", help="Path to PEM CA certificate for proxy TLS verification.")]
 TimeoutOpt = Annotated[Optional[float], typer.Option("--timeout", help="Request timeout in seconds.")]
 OutputOpt = Annotated[str, typer.Option("--output", help="Output mode: json (structured) or raw (body only).")]
 FollowOpt = Annotated[bool, typer.Option("--follow-redirects", help="Follow HTTP redirects.")]
@@ -56,7 +55,6 @@ def _do_request(
     header: list[str] | None,
     region: str | None,
     ip_type: str | None = None,
-    ca_cert: str | None = None,
     timeout: float | None,
     output: str,
     follow_redirects: bool,
@@ -77,30 +75,13 @@ def _do_request(
             print_error("configuration_error", "Invalid JSON in --data flag.")
             raise typer.Exit(code=1)
 
-    # Read CA cert from file path if provided.
-    ca_cert_pem: str | None = None
-    if ca_cert:
-        try:
-            with open(ca_cert) as f:
-                ca_cert_pem = f.read()
-        except OSError as e:
-            print_error("configuration_error", f"Cannot read CA cert: {e}")
-            raise typer.Exit(code=1)
-
-    sr_kwargs: dict = dict(
+    with SpaceRouter(
+        cfg.api_key,
         gateway_url=cfg.gateway_url,
         region=region,
         ip_type=ip_type,
         timeout=cfg.timeout,
-        coordination_url=cfg.coordination_api_url,
         follow_redirects=follow_redirects,
-    )
-    if ca_cert_pem is not None:
-        sr_kwargs["ca_cert"] = ca_cert_pem
-
-    with SpaceRouter(
-        cfg.api_key,
-        **sr_kwargs,
     ) as client:
         resp = client.request(method, url, **kwargs)
 
@@ -129,14 +110,13 @@ def get(
     header: HeaderOpt = None,
     region: RegionOpt = None,
     ip_type: IpTypeOpt = None,
-    ca_cert: CaCertOpt = None,
     timeout: TimeoutOpt = None,
     output: OutputOpt = "json",
     follow_redirects: FollowOpt = False,
 ) -> None:
     """Send a GET request through the residential proxy."""
     _do_request("GET", url, api_key=api_key, gateway_url=gateway_url, header=header,
-                region=region, ip_type=ip_type, ca_cert=ca_cert, timeout=timeout,
+                region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects)
 
 
@@ -150,14 +130,13 @@ def post(
     data: DataOpt = None,
     region: RegionOpt = None,
     ip_type: IpTypeOpt = None,
-    ca_cert: CaCertOpt = None,
     timeout: TimeoutOpt = None,
     output: OutputOpt = "json",
     follow_redirects: FollowOpt = False,
 ) -> None:
     """Send a POST request through the residential proxy."""
     _do_request("POST", url, api_key=api_key, gateway_url=gateway_url, header=header,
-                region=region, ip_type=ip_type, ca_cert=ca_cert, timeout=timeout,
+                region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects, data=data)
 
 
@@ -171,14 +150,13 @@ def put(
     data: DataOpt = None,
     region: RegionOpt = None,
     ip_type: IpTypeOpt = None,
-    ca_cert: CaCertOpt = None,
     timeout: TimeoutOpt = None,
     output: OutputOpt = "json",
     follow_redirects: FollowOpt = False,
 ) -> None:
     """Send a PUT request through the residential proxy."""
     _do_request("PUT", url, api_key=api_key, gateway_url=gateway_url, header=header,
-                region=region, ip_type=ip_type, ca_cert=ca_cert, timeout=timeout,
+                region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects, data=data)
 
 
@@ -192,14 +170,13 @@ def patch(
     data: DataOpt = None,
     region: RegionOpt = None,
     ip_type: IpTypeOpt = None,
-    ca_cert: CaCertOpt = None,
     timeout: TimeoutOpt = None,
     output: OutputOpt = "json",
     follow_redirects: FollowOpt = False,
 ) -> None:
     """Send a PATCH request through the residential proxy."""
     _do_request("PATCH", url, api_key=api_key, gateway_url=gateway_url, header=header,
-                region=region, ip_type=ip_type, ca_cert=ca_cert, timeout=timeout,
+                region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects, data=data)
 
 
@@ -212,14 +189,13 @@ def delete(
     header: HeaderOpt = None,
     region: RegionOpt = None,
     ip_type: IpTypeOpt = None,
-    ca_cert: CaCertOpt = None,
     timeout: TimeoutOpt = None,
     output: OutputOpt = "json",
     follow_redirects: FollowOpt = False,
 ) -> None:
     """Send a DELETE request through the residential proxy."""
     _do_request("DELETE", url, api_key=api_key, gateway_url=gateway_url, header=header,
-                region=region, ip_type=ip_type, ca_cert=ca_cert, timeout=timeout,
+                region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects)
 
 
@@ -232,12 +208,11 @@ def head(
     header: HeaderOpt = None,
     region: RegionOpt = None,
     ip_type: IpTypeOpt = None,
-    ca_cert: CaCertOpt = None,
     timeout: TimeoutOpt = None,
     output: OutputOpt = "json",
     follow_redirects: FollowOpt = False,
 ) -> None:
     """Send a HEAD request through the residential proxy."""
     _do_request("HEAD", url, api_key=api_key, gateway_url=gateway_url, header=header,
-                region=region, ip_type=ip_type, ca_cert=ca_cert, timeout=timeout,
+                region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects)

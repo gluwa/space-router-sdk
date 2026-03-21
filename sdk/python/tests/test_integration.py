@@ -35,11 +35,8 @@ pytestmark = pytest.mark.skipif(not API_KEY, reason="SR_API_KEY not set")
 class TestIntegration:
     """End-to-end tests against the live Space Router infrastructure."""
 
-    def test_proxy_request(self, _mock_ca_cert_fetch):
+    def test_proxy_request(self):
         """Proxy a request through the gateway with a billing-provisioned key."""
-        # Undo the conftest mock so the real fetch_ca_cert is called.
-        _mock_ca_cert_fetch.stop()
-        # Let the SDK auto-fetch the CA cert from /ca-cert.
         with SpaceRouter(API_KEY, gateway_url=GATEWAY_URL) as client:
             resp = client.get("https://httpbin.org/ip")
             assert resp.status_code == 200

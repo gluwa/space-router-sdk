@@ -23,14 +23,6 @@ export interface SpaceRouterOptions {
   ipType?: IpType;
   /** Request timeout in milliseconds. Default: `30_000` */
   timeout?: number;
-  /** Coordination API URL (for auto-fetching the CA cert). */
-  coordinationUrl?: string;
-  /**
-   * PEM-encoded CA certificate for verifying target-site TLS through the
-   * proxy network.  When omitted the SDK fetches the cert from the
-   * Coordination API automatically on the first request.
-   */
-  caCert?: string | null;
 }
 
 /** Options for the {@link SpaceRouterAdmin} constructor. */
