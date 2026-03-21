@@ -69,18 +69,6 @@ class SpaceRouterAdmin:
         response = self._client.delete(f"/api-keys/{key_id}")
         response.raise_for_status()
 
-    def fetch_ca_cert(self) -> str | None:
-        """Fetch the proxy network CA certificate.
-
-        Returns the PEM-encoded certificate, or ``None`` when the proxy
-        network does not require a custom CA (HTTP 503).
-        """
-        response = self._client.get("/ca-cert")
-        if response.status_code in (404, 503):
-            return None
-        response.raise_for_status()
-        return response.text
-
     # -- Node management -----------------------------------------------------
 
     def register_node(
@@ -244,18 +232,6 @@ class AsyncSpaceRouterAdmin:
         """Revoke an API key (soft-delete)."""
         response = await self._client.delete(f"/api-keys/{key_id}")
         response.raise_for_status()
-
-    async def fetch_ca_cert(self) -> str | None:
-        """Fetch the proxy network CA certificate.
-
-        Returns the PEM-encoded certificate, or ``None`` when the proxy
-        network does not require a custom CA (HTTP 503).
-        """
-        response = await self._client.get("/ca-cert")
-        if response.status_code in (404, 503):
-            return None
-        response.raise_for_status()
-        return response.text
 
     # -- Node management -----------------------------------------------------
 

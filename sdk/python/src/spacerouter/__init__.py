@@ -1,7 +1,7 @@
 """SpaceRouter Python SDK — route HTTP requests through residential IPs."""
 
 from spacerouter.admin import AsyncSpaceRouterAdmin, SpaceRouterAdmin
-from spacerouter.client import AsyncSpaceRouter, SpaceRouter, fetch_ca_cert
+from spacerouter.client import AsyncSpaceRouter, SpaceRouter
 from spacerouter.exceptions import (
     AuthenticationError,
     NoNodesAvailableError,
@@ -27,7 +27,6 @@ __all__ = [
     "AsyncSpaceRouter",
     "SpaceRouterAdmin",
     "AsyncSpaceRouterAdmin",
-    "fetch_ca_cert",
     "ApiKey",
     "ApiKeyInfo",
     "BillingReissueResult",
