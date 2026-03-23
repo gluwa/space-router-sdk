@@ -160,7 +160,6 @@ describe("SpaceRouterAdmin", () => {
         as_type: "isp",
         wallet_address: "0xabc",
         created_at: "2025-01-01T00:00:00Z",
-        gateway_ca_cert: "-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----",
       };
       const fetchSpy = mockFetch(201, node);
 
@@ -198,7 +197,6 @@ describe("SpaceRouterAdmin", () => {
           health_score: 0.9, region: "US", label: null, ip_type: "residential",
           ip_region: "US", as_type: "isp", wallet_address: "0x1",
           created_at: "2025-01-01T00:00:00Z",
-          gateway_ca_cert: "CERT",
         },
       ];
       const fetchSpy = mockFetch(200, nodes);

@@ -24,7 +24,6 @@ _SAMPLE_NODE = Node(
     as_type="isp",
     wallet_address="0xabc",
     created_at="2025-01-01T00:00:00Z",
-    gateway_ca_cert="CERT",
 )
 
 

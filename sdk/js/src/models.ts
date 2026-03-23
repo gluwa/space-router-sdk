@@ -63,7 +63,7 @@ export interface ApiKeyInfo {
 // Node management
 // ---------------------------------------------------------------------------
 
-/** Registered proxy node returned by `POST /nodes` and `GET /nodes`. */
+/** Proxy node returned by `GET /nodes` and `POST /nodes`. */
 export interface Node {
   id: string;
   endpoint_url: string;
@@ -79,7 +79,7 @@ export interface Node {
   as_type: string;
   wallet_address: string;
   created_at: string;
-  gateway_ca_cert: string;
+  gateway_ca_cert?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ export interface RegisterResult {
   node_id: string;
   address: string;
   endpoint_url: string;
-  gateway_ca_cert: string;
+  gateway_ca_cert?: string;
 }
 
 // ---------------------------------------------------------------------------

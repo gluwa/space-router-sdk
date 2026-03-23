@@ -57,7 +57,7 @@ class ApiKeyInfo(BaseModel):
 
 
 class Node(BaseModel):
-    """Registered proxy node returned by ``POST /nodes`` and ``GET /nodes``."""
+    """Proxy node returned by ``GET /nodes`` and ``POST /nodes``."""
 
     id: str
     endpoint_url: str
@@ -73,7 +73,7 @@ class Node(BaseModel):
     as_type: str
     wallet_address: str
     created_at: str
-    gateway_ca_cert: str
+    gateway_ca_cert: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ class RegisterResult(BaseModel):
     node_id: str
     address: str
     endpoint_url: str
-    gateway_ca_cert: str
+    gateway_ca_cert: str | None = None
 
 
 # ---------------------------------------------------------------------------
