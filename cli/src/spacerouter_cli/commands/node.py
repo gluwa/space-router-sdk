@@ -58,7 +58,7 @@ def register(
 @cli_error_handler
 def update_status(
     node_id: Annotated[str, typer.Argument(help="Node ID.")],
-    status: Annotated[str, typer.Option("--status", help="online, offline, or draining.")],
+    status: Annotated[str, typer.Option("--status", help="offline or draining. To go online, use request-probe.")],
     coordination_url: CoordinationUrlOpt = None,
 ) -> None:
     """Update a node's operational status."""
@@ -66,6 +66,19 @@ def update_status(
     with SpaceRouterAdmin(cfg.coordination_api_url) as admin:
         admin.update_node_status(node_id, status=status)  # type: ignore[arg-type]
     print_json({"ok": True})
+
+
+@app.command("request-probe")
+@cli_error_handler
+def request_probe(
+    node_id: Annotated[str, typer.Argument(help="Node ID.")],
+    coordination_url: CoordinationUrlOpt = None,
+) -> None:
+    """Request a health probe for an offline node. If the probe passes, the node goes online."""
+    cfg = resolve_config(coordination_api_url=coordination_url)
+    with SpaceRouterAdmin(cfg.coordination_api_url) as admin:
+        admin.request_probe(node_id)
+    print_json({"ok": True, "message": "Probe queued. Node will go online if probe passes."})
 
 
 @app.command("delete")
