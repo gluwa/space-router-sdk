@@ -5,8 +5,8 @@
 /** IP address type for filtering proxy nodes. */
 export type IpType = "residential" | "mobile" | "datacenter" | "business";
 
-/** Node operational status. */
-export type NodeStatus = "online" | "offline" | "draining";
+/** Node operational status (for status updates). Nodes go online via health probes. */
+export type NodeStatus = "offline" | "draining";
 
 /** How a node connects to the network. */
 export type NodeConnectivityType = "direct" | "upnp" | "external_provider";

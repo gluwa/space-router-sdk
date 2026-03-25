@@ -128,7 +128,7 @@ export class SpaceRouterAdmin {
     return (await response.json()) as Node[];
   }
 
-  /** Update a node's operational status. */
+  /** Update a node's operational status (offline or draining only). */
   async updateNodeStatus(nodeId: string, status: NodeStatus): Promise<void> {
     const response = await this._fetch(`/nodes/${nodeId}/status`, {
       method: "PATCH",
@@ -139,6 +139,19 @@ export class SpaceRouterAdmin {
     if (!response.ok) {
       throw new Error(
         `Failed to update node status: ${response.status} ${response.statusText}`,
+      );
+    }
+  }
+
+  /** Request a health probe for an offline node. If the probe passes, the node goes online. */
+  async requestProbe(nodeId: string): Promise<void> {
+    const response = await this._fetch(`/nodes/${nodeId}/request-probe`, {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to request probe: ${response.status} ${response.statusText}`,
       );
     }
   }

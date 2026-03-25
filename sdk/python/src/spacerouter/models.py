@@ -14,8 +14,8 @@ from pydantic import BaseModel
 IpType = Literal["residential", "mobile", "datacenter", "business"]
 """IP address type for filtering proxy nodes."""
 
-NodeStatus = Literal["online", "offline", "draining"]
-"""Node operational status."""
+NodeStatus = Literal["offline", "draining"]
+"""Node operational status (for status updates). Nodes go online via health probes."""
 
 NodeConnectivityType = Literal["direct", "upnp", "external_provider"]
 """How a node connects to the network."""
