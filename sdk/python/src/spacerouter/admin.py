@@ -98,25 +98,42 @@ class SpaceRouterAdmin:
         response.raise_for_status()
         return [Node.model_validate(item) for item in response.json()]
 
-    def update_node_status(self, node_id: str, *, status: NodeStatus) -> None:
-        """Update a node's operational status (offline or draining only)."""
+    def update_node_status(
+        self, node_id: str, *, status: NodeStatus, private_key: str,
+    ) -> None:
+        """Update a node's operational status (offline or draining only). Requires identity key."""
+        from spacerouter.identity import sign_request
+        sig, ts = sign_request(private_key, "update_status", node_id)
+        from eth_account import Account
+        wallet = Account.from_key(private_key).address.lower()
         response = self._client.patch(
-            f"/nodes/{node_id}/status", json={"status": status}
+            f"/nodes/{node_id}/status",
+            json={"status": status, "wallet_address": wallet, "signature": sig, "timestamp": ts},
         )
         response.raise_for_status()
 
-    def request_probe(self, node_id: str) -> None:
-        """Request a health probe for an offline node.
-
-        The Coordination API will verify the node can forward traffic.
-        If the probe passes, the node is marked online.
-        """
-        response = self._client.post(f"/nodes/{node_id}/request-probe")
+    def request_probe(self, node_id: str, *, private_key: str) -> None:
+        """Request a health probe for an offline node. Requires identity key."""
+        from spacerouter.identity import sign_request
+        sig, ts = sign_request(private_key, "request_probe", node_id)
+        from eth_account import Account
+        wallet = Account.from_key(private_key).address.lower()
+        response = self._client.post(
+            f"/nodes/{node_id}/request-probe",
+            json={"wallet_address": wallet, "signature": sig, "timestamp": ts},
+        )
         response.raise_for_status()
 
-    def delete_node(self, node_id: str) -> None:
-        """Delete a registered node."""
-        response = self._client.delete(f"/nodes/{node_id}")
+    def delete_node(self, node_id: str, *, private_key: str) -> None:
+        """Delete a registered node. Requires identity key."""
+        from spacerouter.identity import sign_request
+        sig, ts = sign_request(private_key, "delete_node", node_id)
+        from eth_account import Account
+        wallet = Account.from_key(private_key).address.lower()
+        response = self._client.request(
+            "DELETE", f"/nodes/{node_id}",
+            json={"wallet_address": wallet, "signature": sig, "timestamp": ts},
+        )
         response.raise_for_status()
 
     # -- Staking registration ------------------------------------------------
@@ -271,25 +288,42 @@ class AsyncSpaceRouterAdmin:
         response.raise_for_status()
         return [Node.model_validate(item) for item in response.json()]
 
-    async def update_node_status(self, node_id: str, *, status: NodeStatus) -> None:
-        """Update a node's operational status (offline or draining only)."""
+    async def update_node_status(
+        self, node_id: str, *, status: NodeStatus, private_key: str,
+    ) -> None:
+        """Update a node's operational status (offline or draining only). Requires identity key."""
+        from spacerouter.identity import sign_request
+        sig, ts = sign_request(private_key, "update_status", node_id)
+        from eth_account import Account
+        wallet = Account.from_key(private_key).address.lower()
         response = await self._client.patch(
-            f"/nodes/{node_id}/status", json={"status": status}
+            f"/nodes/{node_id}/status",
+            json={"status": status, "wallet_address": wallet, "signature": sig, "timestamp": ts},
         )
         response.raise_for_status()
 
-    async def request_probe(self, node_id: str) -> None:
-        """Request a health probe for an offline node.
-
-        The Coordination API will verify the node can forward traffic.
-        If the probe passes, the node is marked online.
-        """
-        response = await self._client.post(f"/nodes/{node_id}/request-probe")
+    async def request_probe(self, node_id: str, *, private_key: str) -> None:
+        """Request a health probe for an offline node. Requires identity key."""
+        from spacerouter.identity import sign_request
+        sig, ts = sign_request(private_key, "request_probe", node_id)
+        from eth_account import Account
+        wallet = Account.from_key(private_key).address.lower()
+        response = await self._client.post(
+            f"/nodes/{node_id}/request-probe",
+            json={"wallet_address": wallet, "signature": sig, "timestamp": ts},
+        )
         response.raise_for_status()
 
-    async def delete_node(self, node_id: str) -> None:
-        """Delete a registered node."""
-        response = await self._client.delete(f"/nodes/{node_id}")
+    async def delete_node(self, node_id: str, *, private_key: str) -> None:
+        """Delete a registered node. Requires identity key."""
+        from spacerouter.identity import sign_request
+        sig, ts = sign_request(private_key, "delete_node", node_id)
+        from eth_account import Account
+        wallet = Account.from_key(private_key).address.lower()
+        response = await self._client.request(
+            "DELETE", f"/nodes/{node_id}",
+            json={"wallet_address": wallet, "signature": sig, "timestamp": ts},
+        )
         response.raise_for_status()
 
     # -- Staking registration ------------------------------------------------

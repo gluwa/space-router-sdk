@@ -18,40 +18,30 @@ CoordinationUrlOpt = Annotated[
     typer.Option("--coordination-url", help="Coordination API URL."),
 ]
 
+IdentityKeyOpt = Annotated[
+    Optional[str],
+    typer.Option("--identity-key", help="Path to node identity key file. Default: ~/.spacerouter/identity.key"),
+]
+
+
+def _load_identity(key_path: str | None = None) -> str:
+    """Load the node identity private key (auto-create if missing)."""
+    from spacerouter.identity import load_or_create_identity, DEFAULT_IDENTITY_PATH
+    path = key_path or DEFAULT_IDENTITY_PATH
+    private_key, address = load_or_create_identity(path)
+    return private_key
+
 
 @app.command("list")
 @cli_error_handler
 def list_nodes(
     coordination_url: CoordinationUrlOpt = None,
 ) -> None:
-    """List all registered nodes."""
+    """List all registered nodes (deprecated — use 'get' instead)."""
     cfg = resolve_config(coordination_api_url=coordination_url)
     with SpaceRouterAdmin(cfg.coordination_api_url) as admin:
         nodes = admin.list_nodes()
     print_json([n.model_dump() for n in nodes])
-
-
-@app.command("register")
-@cli_error_handler
-def register(
-    endpoint_url: Annotated[str, typer.Option("--endpoint-url", help="Node endpoint URL.")],
-    wallet_address: Annotated[str, typer.Option("--wallet-address", help="Node wallet address.")],
-    label: Annotated[Optional[str], typer.Option("--label", help="Human-readable label.")] = None,
-    connectivity_type: Annotated[
-        Optional[str], typer.Option("--connectivity-type", help="direct, upnp, or external_provider.")
-    ] = None,
-    coordination_url: CoordinationUrlOpt = None,
-) -> None:
-    """Register a new proxy node."""
-    cfg = resolve_config(coordination_api_url=coordination_url)
-    with SpaceRouterAdmin(cfg.coordination_api_url) as admin:
-        node = admin.register_node(
-            endpoint_url=endpoint_url,
-            wallet_address=wallet_address,
-            label=label,
-            connectivity_type=connectivity_type,
-        )
-    print_json(node.model_dump())
 
 
 @app.command("update-status")
@@ -59,12 +49,14 @@ def register(
 def update_status(
     node_id: Annotated[str, typer.Argument(help="Node ID.")],
     status: Annotated[str, typer.Option("--status", help="offline or draining. To go online, use request-probe.")],
+    identity_key: IdentityKeyOpt = None,
     coordination_url: CoordinationUrlOpt = None,
 ) -> None:
-    """Update a node's operational status."""
+    """Update a node's operational status. Requires node identity key."""
+    private_key = _load_identity(identity_key)
     cfg = resolve_config(coordination_api_url=coordination_url)
     with SpaceRouterAdmin(cfg.coordination_api_url) as admin:
-        admin.update_node_status(node_id, status=status)  # type: ignore[arg-type]
+        admin.update_node_status(node_id, status=status, private_key=private_key)  # type: ignore[arg-type]
     print_json({"ok": True})
 
 
@@ -72,12 +64,14 @@ def update_status(
 @cli_error_handler
 def request_probe(
     node_id: Annotated[str, typer.Argument(help="Node ID.")],
+    identity_key: IdentityKeyOpt = None,
     coordination_url: CoordinationUrlOpt = None,
 ) -> None:
-    """Request a health probe for an offline node. If the probe passes, the node goes online."""
+    """Request a health probe for an offline node. Requires node identity key."""
+    private_key = _load_identity(identity_key)
     cfg = resolve_config(coordination_api_url=coordination_url)
     with SpaceRouterAdmin(cfg.coordination_api_url) as admin:
-        admin.request_probe(node_id)
+        admin.request_probe(node_id, private_key=private_key)
     print_json({"ok": True, "message": "Probe queued. Node will go online if probe passes."})
 
 
@@ -85,44 +79,12 @@ def request_probe(
 @cli_error_handler
 def delete(
     node_id: Annotated[str, typer.Argument(help="Node ID.")],
+    identity_key: IdentityKeyOpt = None,
     coordination_url: CoordinationUrlOpt = None,
 ) -> None:
-    """Delete a registered node."""
+    """Delete a registered node. Requires node identity key."""
+    private_key = _load_identity(identity_key)
     cfg = resolve_config(coordination_api_url=coordination_url)
     with SpaceRouterAdmin(cfg.coordination_api_url) as admin:
-        admin.delete_node(node_id)
+        admin.delete_node(node_id, private_key=private_key)
     print_json({"ok": True})
-
-
-@app.command("register-challenge")
-@cli_error_handler
-def register_challenge(
-    address: Annotated[str, typer.Option("--address", help="Wallet address.")],
-    coordination_url: CoordinationUrlOpt = None,
-) -> None:
-    """Request a signing challenge for staking registration."""
-    cfg = resolve_config(coordination_api_url=coordination_url)
-    with SpaceRouterAdmin(cfg.coordination_api_url) as admin:
-        challenge = admin.get_register_challenge(address)
-    print_json(challenge.model_dump())
-
-
-@app.command("register-verify")
-@cli_error_handler
-def register_verify(
-    address: Annotated[str, typer.Option("--address", help="Wallet address.")],
-    endpoint_url: Annotated[str, typer.Option("--endpoint-url", help="Node endpoint URL.")],
-    signed_nonce: Annotated[str, typer.Option("--signed-nonce", help="Signed nonce from challenge.")],
-    label: Annotated[Optional[str], typer.Option("--label", help="Human-readable label.")] = None,
-    coordination_url: CoordinationUrlOpt = None,
-) -> None:
-    """Verify a signed nonce and register the node via staking."""
-    cfg = resolve_config(coordination_api_url=coordination_url)
-    with SpaceRouterAdmin(cfg.coordination_api_url) as admin:
-        result = admin.verify_and_register(
-            address=address,
-            endpoint_url=endpoint_url,
-            signed_nonce=signed_nonce,
-            label=label,
-        )
-    print_json(result.model_dump())

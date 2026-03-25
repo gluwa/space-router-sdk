@@ -128,12 +128,24 @@ export class SpaceRouterAdmin {
     return (await response.json()) as Node[];
   }
 
-  /** Update a node's operational status (offline or draining only). */
-  async updateNodeStatus(nodeId: string, status: NodeStatus): Promise<void> {
+  /**
+   * Update a node's operational status (offline or draining only).
+   * Requires a signed request proving node identity ownership.
+   */
+  async updateNodeStatus(
+    nodeId: string,
+    status: NodeStatus,
+    auth: { walletAddress: string; signature: string; timestamp: number },
+  ): Promise<void> {
     const response = await this._fetch(`/nodes/${nodeId}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({
+        status,
+        wallet_address: auth.walletAddress,
+        signature: auth.signature,
+        timestamp: auth.timestamp,
+      }),
     });
 
     if (!response.ok) {
@@ -143,10 +155,22 @@ export class SpaceRouterAdmin {
     }
   }
 
-  /** Request a health probe for an offline node. If the probe passes, the node goes online. */
-  async requestProbe(nodeId: string): Promise<void> {
+  /**
+   * Request a health probe for an offline node.
+   * Requires a signed request proving node identity ownership.
+   */
+  async requestProbe(
+    nodeId: string,
+    auth: { walletAddress: string; signature: string; timestamp: number },
+  ): Promise<void> {
     const response = await this._fetch(`/nodes/${nodeId}/request-probe`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        wallet_address: auth.walletAddress,
+        signature: auth.signature,
+        timestamp: auth.timestamp,
+      }),
     });
 
     if (!response.ok) {
@@ -156,10 +180,22 @@ export class SpaceRouterAdmin {
     }
   }
 
-  /** Delete a registered node. */
-  async deleteNode(nodeId: string): Promise<void> {
+  /**
+   * Delete a registered node.
+   * Requires a signed request proving node identity ownership.
+   */
+  async deleteNode(
+    nodeId: string,
+    auth: { walletAddress: string; signature: string; timestamp: number },
+  ): Promise<void> {
     const response = await this._fetch(`/nodes/${nodeId}`, {
       method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        wallet_address: auth.walletAddress,
+        signature: auth.signature,
+        timestamp: auth.timestamp,
+      }),
     });
 
     if (!response.ok) {
