@@ -126,12 +126,20 @@ class SpaceRouter:
         with SpaceRouter("sr_live_xxx") as client:
             resp = client.get("https://example.com")
             print(resp.status_code, resp.node_id)
+
+    Wallet-authenticated example::
+
+        from spacerouter import ClientIdentity
+        identity = ClientIdentity.from_keystore("~/.spacerouter/identity.json", "pass")
+        with SpaceRouter(identity=identity) as client:
+            resp = client.get("https://example.com")
     """
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         *,
+        identity: Any | None = None,
         gateway_url: str = _DEFAULT_HTTP_GATEWAY,
         protocol: Literal["http", "socks5"] = "http",
         region: str | None = None,
@@ -139,7 +147,10 @@ class SpaceRouter:
         timeout: float = 30.0,
         **httpx_kwargs: Any,
     ) -> None:
+        if api_key is None and identity is None:
+            raise ValueError("Either api_key or identity must be provided")
         self._api_key = api_key
+        self._identity = identity
         self._gateway_url = gateway_url
         self._protocol = protocol
         self._region = region
@@ -147,15 +158,32 @@ class SpaceRouter:
         self._timeout = timeout
 
         verify = httpx_kwargs.pop("verify", True)
-        proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
-        self._client = httpx.Client(
-            proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
-        )
+        if api_key:
+            proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
+            self._client = httpx.Client(
+                proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
+            )
+        else:
+            # Identity-authenticated: no proxy credentials needed at init.
+            # Auth headers are added per-request.
+            proxy = _build_proxy("identity", gateway_url, protocol, region, ip_type)
+            self._client = httpx.Client(
+                proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
+            )
 
     # -- HTTP methods -------------------------------------------------------
 
+    def _inject_identity_headers(self, kwargs: dict) -> dict:
+        """Add wallet-auth headers when using identity-based auth."""
+        if self._identity is not None:
+            headers = dict(kwargs.get("headers") or {})
+            headers.update(self._identity.sign_auth_header())
+            kwargs["headers"] = headers
+        return kwargs
+
     def request(self, method: str, url: str, **kwargs: Any) -> ProxyResponse:
         """Send a request through the SpaceRouter proxy."""
+        kwargs = self._inject_identity_headers(kwargs)
         response = self._client.request(method, url, **kwargs)
         _check_proxy_errors(response)
         return ProxyResponse(response)
@@ -189,6 +217,7 @@ class SpaceRouter:
         """Return a new client with different routing preferences."""
         return SpaceRouter(
             self._api_key,
+            identity=self._identity,
             gateway_url=self._gateway_url,
             protocol=self._protocol,
             region=region,
@@ -227,12 +256,20 @@ class AsyncSpaceRouter:
         async with AsyncSpaceRouter("sr_live_xxx") as client:
             resp = await client.get("https://example.com")
             print(resp.status_code, resp.node_id)
+
+    Wallet-authenticated example::
+
+        from spacerouter import ClientIdentity
+        identity = ClientIdentity.from_keystore("~/.spacerouter/identity.json", "pass")
+        async with AsyncSpaceRouter(identity=identity) as client:
+            resp = await client.get("https://example.com")
     """
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         *,
+        identity: Any | None = None,
         gateway_url: str = _DEFAULT_HTTP_GATEWAY,
         protocol: Literal["http", "socks5"] = "http",
         region: str | None = None,
@@ -240,7 +277,10 @@ class AsyncSpaceRouter:
         timeout: float = 30.0,
         **httpx_kwargs: Any,
     ) -> None:
+        if api_key is None and identity is None:
+            raise ValueError("Either api_key or identity must be provided")
         self._api_key = api_key
+        self._identity = identity
         self._gateway_url = gateway_url
         self._protocol = protocol
         self._region = region
@@ -248,15 +288,25 @@ class AsyncSpaceRouter:
         self._timeout = timeout
 
         verify = httpx_kwargs.pop("verify", True)
-        proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
+        effective_key = api_key or "identity"
+        proxy = _build_proxy(effective_key, gateway_url, protocol, region, ip_type)
         self._client = httpx.AsyncClient(
             proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
         )
+
+    def _inject_identity_headers(self, kwargs: dict) -> dict:
+        """Add wallet-auth headers when using identity-based auth."""
+        if self._identity is not None:
+            headers = dict(kwargs.get("headers") or {})
+            headers.update(self._identity.sign_auth_header())
+            kwargs["headers"] = headers
+        return kwargs
 
     # -- HTTP methods -------------------------------------------------------
 
     async def request(self, method: str, url: str, **kwargs: Any) -> ProxyResponse:
         """Send a request through the SpaceRouter proxy."""
+        kwargs = self._inject_identity_headers(kwargs)
         response = await self._client.request(method, url, **kwargs)
         _check_proxy_errors(response)
         return ProxyResponse(response)
@@ -290,6 +340,7 @@ class AsyncSpaceRouter:
         """Return a new client with different routing preferences."""
         return AsyncSpaceRouter(
             self._api_key,
+            identity=self._identity,
             gateway_url=self._gateway_url,
             protocol=self._protocol,
             region=region,

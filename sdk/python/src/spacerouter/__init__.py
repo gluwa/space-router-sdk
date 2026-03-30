@@ -15,6 +15,13 @@ from spacerouter.identity import (
     load_or_create_identity,
     sign_request,
 )
+
+try:
+    from spacerouter.identity import ClientIdentity
+except ImportError:
+    # eth-account not installed — wallet features unavailable
+    # Install with: pip install spacerouter[wallet]
+    pass
 from spacerouter.models import (
     ApiKey,
     ApiKeyInfo,
@@ -56,4 +63,5 @@ __all__ = [
     "sign_request",
     "create_vouching_signature",
     "get_address",
+    "ClientIdentity",
 ]

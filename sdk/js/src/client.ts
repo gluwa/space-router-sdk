@@ -15,6 +15,7 @@ import {
 } from "./errors.js";
 import type { IpType, SpaceRouterOptions } from "./models.js";
 import { ProxyResponse } from "./models.js";
+import type { ClientIdentity } from "./identity.js";
 
 const DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org:8080";
 const DEFAULT_TIMEOUT = 30_000;
@@ -134,16 +135,33 @@ export class SpaceRouter {
   private readonly _ipType: IpType | undefined;
   private readonly _timeout: number;
   private readonly _agent: ProxyAgent | SocksProxyAgent;
+  private readonly _identity?: ClientIdentity;
 
-  constructor(apiKey: string, options?: SpaceRouterOptions) {
-    this._apiKey = apiKey;
-    this._gatewayUrl = options?.gatewayUrl ?? DEFAULT_HTTP_GATEWAY;
-    this._protocol = options?.protocol ?? "http";
-    this._region = options?.region;
-    this._ipType = options?.ipType;
+  constructor(apiKeyOrOptions?: string | SpaceRouterOptions & { identity?: ClientIdentity }, options?: SpaceRouterOptions) {
+    if (typeof apiKeyOrOptions === "string") {
+      // Legacy: new SpaceRouter("api_key", options?)
+      this._apiKey = apiKeyOrOptions;
+      this._identity = undefined;
+      this._gatewayUrl = options?.gatewayUrl ?? DEFAULT_HTTP_GATEWAY;
+      this._protocol = options?.protocol ?? "http";
+      this._region = options?.region;
+      this._ipType = options?.ipType;
+      this._timeout = options?.timeout ?? DEFAULT_TIMEOUT;
+    } else if (apiKeyOrOptions && "identity" in apiKeyOrOptions) {
+      // Identity-based: new SpaceRouter({ identity, ...options })
+      const opts = apiKeyOrOptions;
+      this._apiKey = "identity";
+      this._identity = opts.identity;
+      this._gatewayUrl = opts.gatewayUrl ?? DEFAULT_HTTP_GATEWAY;
+      this._protocol = opts.protocol ?? "http";
+      this._region = opts.region;
+      this._ipType = opts.ipType;
+      this._timeout = opts.timeout ?? DEFAULT_TIMEOUT;
+    } else {
+      throw new Error("Either an API key string or options with identity must be provided");
+    }
     if (this._region) validateRegion(this._region);
-    this._timeout = options?.timeout ?? DEFAULT_TIMEOUT;
-    this._agent = buildAgent(apiKey, this._gatewayUrl, this._protocol);
+    this._agent = buildAgent(this._apiKey, this._gatewayUrl, this._protocol);
   }
 
   // -- HTTP methods ---------------------------------------------------------
@@ -155,6 +173,12 @@ export class SpaceRouter {
     options?: RequestOptions,
   ): Promise<ProxyResponse> {
     const headers: Record<string, string> = { ...options?.headers };
+
+    // Inject identity auth headers when using wallet-based auth
+    if (this._identity) {
+      const authHeaders = await this._identity.signAuthHeaders();
+      Object.assign(headers, authHeaders);
+    }
 
     if (this._region) {
       headers["X-SpaceRouter-Region"] = this._region;

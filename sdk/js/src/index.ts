@@ -18,6 +18,7 @@ export {
   getAddress,
   signRequest,
   createVouchingSignature,
+  ClientIdentity,
 } from "./identity.js";
 
 export { ProxyResponse, normalizeNode, normalizeRegisterResult } from "./models.js";

@@ -7,7 +7,7 @@ import json
 import typer
 
 from spacerouter_cli import __version__
-from spacerouter_cli.commands import api_key, billing, config_cmd, dashboard, node, request, status
+from spacerouter_cli.commands import api_key, billing, config_cmd, dashboard, identity, node, request, status
 
 app = typer.Typer(
     name="spacerouter",
@@ -22,6 +22,7 @@ app.add_typer(node.app, name="node", help="Manage proxy nodes")
 app.add_typer(billing.app, name="billing", help="Billing and checkout")
 app.add_typer(dashboard.app, name="dashboard", help="Dashboard data")
 app.add_typer(config_cmd.app, name="config", help="Configuration management")
+app.add_typer(identity.app, name="identity", help="Identity wallet management")
 app.command(name="status", help="Check service health")(status.status)
 
 
