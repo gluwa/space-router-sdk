@@ -10,17 +10,20 @@ from typing import Any
 
 import httpx
 
+import warnings
+
 from spacerouter.models import (
     ApiKey,
     ApiKeyInfo,
     BillingReissueResult,
     CheckoutSession,
+    CreditLineStatus,
     Node,
+    NodeStatus,
     RegisterChallenge,
     RegisterResult,
     TransferPage,
 )
-from spacerouter.models import NodeStatus
 
 _DEFAULT_COORDINATION_URL = "https://coordination.spacerouter.org"
 
@@ -75,15 +78,43 @@ class SpaceRouterAdmin:
         self,
         *,
         endpoint_url: str,
-        wallet_address: str,
+        identity_address: str | None = None,
+        staking_address: str | None = None,
+        collection_address: str | None = None,
+        vouching_signature: str | None = None,
+        vouching_timestamp: int | None = None,
         label: str | None = None,
         connectivity_type: str | None = None,
+        wallet_address: str | None = None,
     ) -> Node:
-        """Register a new proxy node."""
+        """Register a new proxy node.
+
+        v0.2.0 accepts ``identity_address``, ``staking_address``,
+        ``collection_address``, and a ``vouching_signature``.  The legacy
+        ``wallet_address`` parameter is still accepted for backward
+        compatibility.
+        """
+        if wallet_address is not None and identity_address is None:
+            warnings.warn(
+                "wallet_address is deprecated — use identity_address, "
+                "staking_address, collection_address",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            identity_address = identity_address or wallet_address
+            staking_address = staking_address or wallet_address
+            collection_address = collection_address or wallet_address
+
         payload: dict[str, Any] = {
             "endpoint_url": endpoint_url,
-            "wallet_address": wallet_address,
+            "identity_address": identity_address,
+            "staking_address": staking_address,
+            "collection_address": collection_address,
         }
+        if vouching_signature is not None:
+            payload["vouching_signature"] = vouching_signature
+        if vouching_timestamp is not None:
+            payload["vouching_timestamp"] = vouching_timestamp
         if label is not None:
             payload["label"] = label
         if connectivity_type is not None:
@@ -91,6 +122,38 @@ class SpaceRouterAdmin:
         response = self._client.post("/nodes", json=payload)
         response.raise_for_status()
         return Node.model_validate(response.json())
+
+    def register_node_with_identity(
+        self,
+        *,
+        private_key: str,
+        endpoint_url: str,
+        staking_address: str,
+        collection_address: str | None = None,
+        label: str | None = None,
+        connectivity_type: str | None = None,
+    ) -> Node:
+        """Register a node using an identity key.
+
+        Derives the identity address and creates the vouching signature
+        automatically.  If ``collection_address`` is *None*, defaults to
+        the identity address.
+        """
+        from spacerouter.identity import create_vouching_signature, get_address
+
+        identity_addr = get_address(private_key)
+        coll_addr = collection_address or identity_addr
+        sig, ts = create_vouching_signature(private_key, staking_address)
+        return self.register_node(
+            endpoint_url=endpoint_url,
+            identity_address=identity_addr,
+            staking_address=staking_address,
+            collection_address=coll_addr,
+            vouching_signature=sig,
+            vouching_timestamp=ts,
+            label=label,
+            connectivity_type=connectivity_type,
+        )
 
     def list_nodes(self) -> list[Node]:
         """List all registered nodes."""
@@ -102,37 +165,37 @@ class SpaceRouterAdmin:
         self, node_id: str, *, status: NodeStatus, private_key: str,
     ) -> None:
         """Update a node's operational status (offline or draining only). Requires identity key."""
-        from spacerouter.identity import sign_request
+        from spacerouter.identity import get_address, sign_request
+
+        addr = get_address(private_key)
         sig, ts = sign_request(private_key, "update_status", node_id)
-        from eth_account import Account
-        wallet = Account.from_key(private_key).address.lower()
         response = self._client.patch(
             f"/nodes/{node_id}/status",
-            json={"status": status, "wallet_address": wallet, "signature": sig, "timestamp": ts},
+            json={"status": status, "identity_address": addr, "wallet_address": addr, "signature": sig, "timestamp": ts},
         )
         response.raise_for_status()
 
     def request_probe(self, node_id: str, *, private_key: str) -> None:
         """Request a health probe for an offline node. Requires identity key."""
-        from spacerouter.identity import sign_request
+        from spacerouter.identity import get_address, sign_request
+
+        addr = get_address(private_key)
         sig, ts = sign_request(private_key, "request_probe", node_id)
-        from eth_account import Account
-        wallet = Account.from_key(private_key).address.lower()
         response = self._client.post(
             f"/nodes/{node_id}/request-probe",
-            json={"wallet_address": wallet, "signature": sig, "timestamp": ts},
+            json={"identity_address": addr, "wallet_address": addr, "signature": sig, "timestamp": ts},
         )
         response.raise_for_status()
 
     def delete_node(self, node_id: str, *, private_key: str) -> None:
         """Delete a registered node. Requires identity key."""
-        from spacerouter.identity import sign_request
+        from spacerouter.identity import get_address, sign_request
+
+        addr = get_address(private_key)
         sig, ts = sign_request(private_key, "delete_node", node_id)
-        from eth_account import Account
-        wallet = Account.from_key(private_key).address.lower()
         response = self._client.request(
             "DELETE", f"/nodes/{node_id}",
-            json={"wallet_address": wallet, "signature": sig, "timestamp": ts},
+            json={"identity_address": addr, "wallet_address": addr, "signature": sig, "timestamp": ts},
         )
         response.raise_for_status()
 
@@ -187,17 +250,39 @@ class SpaceRouterAdmin:
         response.raise_for_status()
         return BillingReissueResult.model_validate(response.json())
 
+    # -- Credit lines (v0.2.0) -----------------------------------------------
+
+    def get_credit_line(self, address: str) -> CreditLineStatus:
+        """Query credit line status for an address."""
+        response = self._client.get(f"/credit-lines/{address}")
+        response.raise_for_status()
+        return CreditLineStatus.model_validate(response.json())
+
     # -- Dashboard -----------------------------------------------------------
 
     def get_transfers(
         self,
         *,
-        wallet_address: str,
+        identity_address: str | None = None,
+        wallet_address: str | None = None,
         page: int | None = None,
         page_size: int | None = None,
     ) -> TransferPage:
-        """Get paginated data transfer history."""
-        params: dict[str, Any] = {"wallet_address": wallet_address}
+        """Get paginated data transfer history.
+
+        Accepts ``identity_address`` (v0.2.0) or the deprecated
+        ``wallet_address`` alias.
+        """
+        addr = identity_address or wallet_address
+        if addr is None:
+            raise ValueError("identity_address (or wallet_address) is required")
+        if wallet_address is not None and identity_address is None:
+            warnings.warn(
+                "wallet_address is deprecated — use identity_address",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        params: dict[str, Any] = {"wallet_address": addr}
         if page is not None:
             params["page"] = page
         if page_size is not None:
@@ -265,15 +350,37 @@ class AsyncSpaceRouterAdmin:
         self,
         *,
         endpoint_url: str,
-        wallet_address: str,
+        identity_address: str | None = None,
+        staking_address: str | None = None,
+        collection_address: str | None = None,
+        vouching_signature: str | None = None,
+        vouching_timestamp: int | None = None,
         label: str | None = None,
         connectivity_type: str | None = None,
+        wallet_address: str | None = None,
     ) -> Node:
-        """Register a new proxy node."""
+        """Register a new proxy node (see sync variant for details)."""
+        if wallet_address is not None and identity_address is None:
+            warnings.warn(
+                "wallet_address is deprecated — use identity_address, "
+                "staking_address, collection_address",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            identity_address = identity_address or wallet_address
+            staking_address = staking_address or wallet_address
+            collection_address = collection_address or wallet_address
+
         payload: dict[str, Any] = {
             "endpoint_url": endpoint_url,
-            "wallet_address": wallet_address,
+            "identity_address": identity_address,
+            "staking_address": staking_address,
+            "collection_address": collection_address,
         }
+        if vouching_signature is not None:
+            payload["vouching_signature"] = vouching_signature
+        if vouching_timestamp is not None:
+            payload["vouching_timestamp"] = vouching_timestamp
         if label is not None:
             payload["label"] = label
         if connectivity_type is not None:
@@ -281,6 +388,33 @@ class AsyncSpaceRouterAdmin:
         response = await self._client.post("/nodes", json=payload)
         response.raise_for_status()
         return Node.model_validate(response.json())
+
+    async def register_node_with_identity(
+        self,
+        *,
+        private_key: str,
+        endpoint_url: str,
+        staking_address: str,
+        collection_address: str | None = None,
+        label: str | None = None,
+        connectivity_type: str | None = None,
+    ) -> Node:
+        """Register a node using an identity key (see sync variant for details)."""
+        from spacerouter.identity import create_vouching_signature, get_address
+
+        identity_addr = get_address(private_key)
+        coll_addr = collection_address or identity_addr
+        sig, ts = create_vouching_signature(private_key, staking_address)
+        return await self.register_node(
+            endpoint_url=endpoint_url,
+            identity_address=identity_addr,
+            staking_address=staking_address,
+            collection_address=coll_addr,
+            vouching_signature=sig,
+            vouching_timestamp=ts,
+            label=label,
+            connectivity_type=connectivity_type,
+        )
 
     async def list_nodes(self) -> list[Node]:
         """List all registered nodes."""
@@ -292,37 +426,37 @@ class AsyncSpaceRouterAdmin:
         self, node_id: str, *, status: NodeStatus, private_key: str,
     ) -> None:
         """Update a node's operational status (offline or draining only). Requires identity key."""
-        from spacerouter.identity import sign_request
+        from spacerouter.identity import get_address, sign_request
+
+        addr = get_address(private_key)
         sig, ts = sign_request(private_key, "update_status", node_id)
-        from eth_account import Account
-        wallet = Account.from_key(private_key).address.lower()
         response = await self._client.patch(
             f"/nodes/{node_id}/status",
-            json={"status": status, "wallet_address": wallet, "signature": sig, "timestamp": ts},
+            json={"status": status, "identity_address": addr, "wallet_address": addr, "signature": sig, "timestamp": ts},
         )
         response.raise_for_status()
 
     async def request_probe(self, node_id: str, *, private_key: str) -> None:
         """Request a health probe for an offline node. Requires identity key."""
-        from spacerouter.identity import sign_request
+        from spacerouter.identity import get_address, sign_request
+
+        addr = get_address(private_key)
         sig, ts = sign_request(private_key, "request_probe", node_id)
-        from eth_account import Account
-        wallet = Account.from_key(private_key).address.lower()
         response = await self._client.post(
             f"/nodes/{node_id}/request-probe",
-            json={"wallet_address": wallet, "signature": sig, "timestamp": ts},
+            json={"identity_address": addr, "wallet_address": addr, "signature": sig, "timestamp": ts},
         )
         response.raise_for_status()
 
     async def delete_node(self, node_id: str, *, private_key: str) -> None:
         """Delete a registered node. Requires identity key."""
-        from spacerouter.identity import sign_request
+        from spacerouter.identity import get_address, sign_request
+
+        addr = get_address(private_key)
         sig, ts = sign_request(private_key, "delete_node", node_id)
-        from eth_account import Account
-        wallet = Account.from_key(private_key).address.lower()
         response = await self._client.request(
             "DELETE", f"/nodes/{node_id}",
-            json={"wallet_address": wallet, "signature": sig, "timestamp": ts},
+            json={"identity_address": addr, "wallet_address": addr, "signature": sig, "timestamp": ts},
         )
         response.raise_for_status()
 
@@ -383,17 +517,35 @@ class AsyncSpaceRouterAdmin:
         response.raise_for_status()
         return BillingReissueResult.model_validate(response.json())
 
+    # -- Credit lines (v0.2.0) -----------------------------------------------
+
+    async def get_credit_line(self, address: str) -> CreditLineStatus:
+        """Query credit line status for an address."""
+        response = await self._client.get(f"/credit-lines/{address}")
+        response.raise_for_status()
+        return CreditLineStatus.model_validate(response.json())
+
     # -- Dashboard -----------------------------------------------------------
 
     async def get_transfers(
         self,
         *,
-        wallet_address: str,
+        identity_address: str | None = None,
+        wallet_address: str | None = None,
         page: int | None = None,
         page_size: int | None = None,
     ) -> TransferPage:
-        """Get paginated data transfer history."""
-        params: dict[str, Any] = {"wallet_address": wallet_address}
+        """Get paginated data transfer history (see sync variant for details)."""
+        addr = identity_address or wallet_address
+        if addr is None:
+            raise ValueError("identity_address (or wallet_address) is required")
+        if wallet_address is not None and identity_address is None:
+            warnings.warn(
+                "wallet_address is deprecated — use identity_address",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        params: dict[str, Any] = {"wallet_address": addr}
         if page is not None:
             params["page"] = page
         if page_size is not None:

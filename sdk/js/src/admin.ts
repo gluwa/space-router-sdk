@@ -9,6 +9,7 @@ import type {
   ApiKeyInfo,
   BillingReissueResult,
   CheckoutSession,
+  CreditLineStatus,
   Node,
   NodeStatus,
   RegisterChallenge,
@@ -16,6 +17,7 @@ import type {
   SpaceRouterAdminOptions,
   TransferPage,
 } from "./models.js";
+import { normalizeNode, normalizeRegisterResult } from "./models.js";
 
 const DEFAULT_COORDINATION_URL = "https://coordination.spacerouter.org";
 const DEFAULT_TIMEOUT = 10_000;
@@ -93,17 +95,36 @@ export class SpaceRouterAdmin {
 
   // -- Node management ------------------------------------------------------
 
-  /** Register a new proxy node. */
+  /**
+   * Register a new proxy node.
+   *
+   * v0.2.0 accepts separate wallet addresses for identity, staking, and
+   * collection roles.  The legacy `wallet_address` parameter is still
+   * accepted for backward compatibility.
+   */
   async registerNode(params: {
     endpoint_url: string;
-    wallet_address: string;
+    identity_address?: string;
+    staking_address?: string;
+    collection_address?: string;
+    vouching_signature?: string;
+    vouching_timestamp?: number;
     label?: string;
     connectivity_type?: string;
+    /** @deprecated Use identity_address + staking_address + collection_address. */
+    wallet_address?: string;
   }): Promise<Node> {
+    const body: Record<string, unknown> = { ...params };
+    if (params.wallet_address && !params.identity_address) {
+      body.identity_address = params.wallet_address;
+      body.staking_address ??= params.wallet_address;
+      body.collection_address ??= params.wallet_address;
+    }
+
     const response = await this._fetch("/nodes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -112,7 +133,42 @@ export class SpaceRouterAdmin {
       );
     }
 
-    return (await response.json()) as Node;
+    return normalizeNode(await response.json() as Record<string, unknown>);
+  }
+
+  /**
+   * Register a node using an identity key.
+   *
+   * Derives the identity address and creates the vouching signature
+   * automatically.
+   */
+  async registerNodeWithIdentity(params: {
+    privateKey: `0x${string}`;
+    endpointUrl: string;
+    stakingAddress: string;
+    collectionAddress?: string;
+    label?: string;
+    connectivityType?: string;
+  }): Promise<Node> {
+    const { getAddress, createVouchingSignature } = await import(
+      "./identity.js"
+    );
+    const identityAddress = getAddress(params.privateKey);
+    const collectionAddress = params.collectionAddress ?? identityAddress;
+    const { signature, timestamp } = await createVouchingSignature(
+      params.privateKey,
+      params.stakingAddress,
+    );
+    return this.registerNode({
+      endpoint_url: params.endpointUrl,
+      identity_address: identityAddress,
+      staking_address: params.stakingAddress,
+      collection_address: collectionAddress,
+      vouching_signature: signature,
+      vouching_timestamp: timestamp,
+      label: params.label,
+      connectivity_type: params.connectivityType,
+    });
   }
 
   /** List all registered nodes. */
@@ -125,7 +181,8 @@ export class SpaceRouterAdmin {
       );
     }
 
-    return (await response.json()) as Node[];
+    const raw = (await response.json()) as Record<string, unknown>[];
+    return raw.map(normalizeNode);
   }
 
   /**
@@ -135,14 +192,22 @@ export class SpaceRouterAdmin {
   async updateNodeStatus(
     nodeId: string,
     status: NodeStatus,
-    auth: { walletAddress: string; signature: string; timestamp: number },
+    auth: {
+      identityAddress: string;
+      signature: string;
+      timestamp: number;
+      /** @deprecated Use identityAddress. */
+      walletAddress?: string;
+    },
   ): Promise<void> {
+    const addr = auth.identityAddress ?? auth.walletAddress;
     const response = await this._fetch(`/nodes/${nodeId}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         status,
-        wallet_address: auth.walletAddress,
+        identity_address: addr,
+        wallet_address: addr,
         signature: auth.signature,
         timestamp: auth.timestamp,
       }),
@@ -161,13 +226,21 @@ export class SpaceRouterAdmin {
    */
   async requestProbe(
     nodeId: string,
-    auth: { walletAddress: string; signature: string; timestamp: number },
+    auth: {
+      identityAddress: string;
+      signature: string;
+      timestamp: number;
+      /** @deprecated Use identityAddress. */
+      walletAddress?: string;
+    },
   ): Promise<void> {
+    const addr = auth.identityAddress ?? auth.walletAddress;
     const response = await this._fetch(`/nodes/${nodeId}/request-probe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        wallet_address: auth.walletAddress,
+        identity_address: addr,
+        wallet_address: addr,
         signature: auth.signature,
         timestamp: auth.timestamp,
       }),
@@ -186,13 +259,21 @@ export class SpaceRouterAdmin {
    */
   async deleteNode(
     nodeId: string,
-    auth: { walletAddress: string; signature: string; timestamp: number },
+    auth: {
+      identityAddress: string;
+      signature: string;
+      timestamp: number;
+      /** @deprecated Use identityAddress. */
+      walletAddress?: string;
+    },
   ): Promise<void> {
+    const addr = auth.identityAddress ?? auth.walletAddress;
     const response = await this._fetch(`/nodes/${nodeId}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        wallet_address: auth.walletAddress,
+        identity_address: addr,
+        wallet_address: addr,
         signature: auth.signature,
         timestamp: auth.timestamp,
       }),
@@ -243,7 +324,9 @@ export class SpaceRouterAdmin {
       );
     }
 
-    return (await response.json()) as RegisterResult;
+    return normalizeRegisterResult(
+      (await response.json()) as Record<string, unknown>,
+    );
   }
 
   // -- Billing --------------------------------------------------------------
@@ -299,17 +382,41 @@ export class SpaceRouterAdmin {
     return (await response.json()) as BillingReissueResult;
   }
 
+  // -- Credit lines (v0.2.0) ------------------------------------------------
+
+  /** Query credit line status for an address. */
+  async getCreditLine(address: string): Promise<CreditLineStatus> {
+    const response = await this._fetch(`/credit-lines/${address}`, {
+      method: "GET",
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to get credit line: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    return (await response.json()) as CreditLineStatus;
+  }
+
   // -- Dashboard ------------------------------------------------------------
 
-  /** Get paginated data transfer history. */
+  /**
+   * Get paginated data transfer history.
+   *
+   * Accepts `identity_address` (v0.2.0) or the deprecated `wallet_address`.
+   */
   async getTransfers(params: {
-    wallet_address: string;
+    identity_address?: string;
+    /** @deprecated Use identity_address. */
+    wallet_address?: string;
     page?: number;
     page_size?: number;
   }): Promise<TransferPage> {
-    const query = new URLSearchParams({
-      wallet_address: params.wallet_address,
-    });
+    const addr = params.identity_address ?? params.wallet_address;
+    if (!addr) throw new Error("identity_address (or wallet_address) is required");
+
+    const query = new URLSearchParams({ wallet_address: addr });
     if (params.page != null) query.set("page", String(params.page));
     if (params.page_size != null)
       query.set("page_size", String(params.page_size));

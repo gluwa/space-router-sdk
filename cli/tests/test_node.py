@@ -22,9 +22,32 @@ _SAMPLE_NODE = Node(
     ip_type="residential",
     ip_region="US",
     as_type="isp",
-    wallet_address="0xabc",
+    identity_address="0xabc",
+    staking_address="0xdef",
+    collection_address="0xabc",
     created_at="2025-01-01T00:00:00Z",
 )
+
+
+class TestRegisterNode:
+    @patch("spacerouter_cli.commands.node._load_identity", return_value="0x" + "ab" * 32)
+    @patch("spacerouter_cli.commands.node.SpaceRouterAdmin")
+    def test_register(self, mock_admin_cls, mock_identity, runner, cli_env):
+        mock_admin = MagicMock()
+        mock_admin.__enter__ = MagicMock(return_value=mock_admin)
+        mock_admin.__exit__ = MagicMock(return_value=False)
+        mock_admin.register_node_with_identity.return_value = _SAMPLE_NODE
+        mock_admin_cls.return_value = mock_admin
+
+        result = runner.invoke(app, [
+            "node", "register",
+            "--endpoint-url", "http://192.168.1.100:9090",
+            "--staking-address", "0xdef",
+        ])
+        assert result.exit_code == 0
+        data = parse_json_output(result.output)
+        assert data["id"] == "node-1"
+        assert data["identity_address"] == "0xabc"
 
 
 class TestListNodes:

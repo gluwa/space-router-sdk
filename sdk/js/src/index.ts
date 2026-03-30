@@ -13,12 +13,20 @@ export {
   UpstreamError,
 } from "./errors.js";
 
-export { ProxyResponse } from "./models.js";
+export {
+  loadOrCreateIdentity,
+  getAddress,
+  signRequest,
+  createVouchingSignature,
+} from "./identity.js";
+
+export { ProxyResponse, normalizeNode, normalizeRegisterResult } from "./models.js";
 export type {
   ApiKey,
   ApiKeyInfo,
   BillingReissueResult,
   CheckoutSession,
+  CreditLineStatus,
   IpType,
   Node,
   NodeConnectivityType,
@@ -29,4 +37,5 @@ export type {
   SpaceRouterOptions,
   Transfer,
   TransferPage,
+  VouchingSignature,
 } from "./models.js";

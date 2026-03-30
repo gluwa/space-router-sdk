@@ -32,6 +32,32 @@ def _load_identity(key_path: str | None = None) -> str:
     return private_key
 
 
+@app.command("register")
+@cli_error_handler
+def register(
+    endpoint_url: Annotated[str, typer.Option("--endpoint-url", help="Node endpoint URL.")],
+    staking_address: Annotated[str, typer.Option("--staking-address", help="Staking wallet address.")],
+    collection_address: Annotated[Optional[str], typer.Option("--collection-address", help="Collection wallet. Defaults to identity address.")] = None,
+    label: Annotated[Optional[str], typer.Option("--label", help="Human-readable node label.")] = None,
+    connectivity_type: Annotated[Optional[str], typer.Option("--connectivity-type", help="direct, upnp, or external_provider.")] = None,
+    identity_key: IdentityKeyOpt = None,
+    coordination_url: CoordinationUrlOpt = None,
+) -> None:
+    """Register a new proxy node using identity key. Creates vouching signature automatically."""
+    private_key = _load_identity(identity_key)
+    cfg = resolve_config(coordination_api_url=coordination_url)
+    with SpaceRouterAdmin(cfg.coordination_api_url) as admin:
+        node = admin.register_node_with_identity(
+            private_key=private_key,
+            endpoint_url=endpoint_url,
+            staking_address=staking_address,
+            collection_address=collection_address,
+            label=label,
+            connectivity_type=connectivity_type,
+        )
+    print_json(node.model_dump())
+
+
 @app.command("list")
 @cli_error_handler
 def list_nodes(
