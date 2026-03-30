@@ -15,6 +15,7 @@ from spacerouter.identity import (
     load_or_create_identity,
     sign_request,
 )
+from spacerouter.payment import ClientPaymentWallet, ClientReceiptValidator, SpaceRouterSPACE
 from spacerouter.models import (
     ApiKey,
     ApiKeyInfo,
@@ -56,4 +57,7 @@ __all__ = [
     "sign_request",
     "create_vouching_signature",
     "get_address",
+    "ClientPaymentWallet",
+    "ClientReceiptValidator",
+    "SpaceRouterSPACE",
 ]

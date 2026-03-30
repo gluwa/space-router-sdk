@@ -20,6 +20,30 @@ export {
   createVouchingSignature,
 } from "./identity.js";
 
+export {
+  SpaceRouterSPACE,
+  type SpaceRouterSPACEOptions,
+  type ChallengeResponse,
+  type AuthHeaders,
+} from "./spacerouterSpace.js";
+
+export {
+  ClientWallet,
+  type ClientWalletOptions,
+  ReceiptValidator,
+  type ReceiptData,
+  type ReceiptValidatorOptions,
+  type ValidationResult,
+} from "./payment/index.js";
+
+export {
+  EscrowClient,
+  ESCROW_ABI,
+  RECEIPT_EIP712_DOMAIN,
+  receiptTypes,
+  type Receipt,
+} from "./escrow.js";
+
 export { ProxyResponse, normalizeNode, normalizeRegisterResult } from "./models.js";
 export type {
   ApiKey,
