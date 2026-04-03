@@ -302,6 +302,68 @@ class TestAsyncSpaceRouter:
 # ---------------------------------------------------------------------------
 
 
+class TestListRegions:
+    @respx.mock
+    def test_list_regions_success(self):
+        respx.get("https://coordination.spacerouter.org/regions").mock(
+            return_value=httpx.Response(200, json={
+                "regions": [{"region": "US", "ip_types": ["residential", "mobile"]}],
+                "brightdata_available": True,
+            })
+        )
+        with SpaceRouter("sr_live_test") as client:
+            result = client.list_regions()
+            assert len(result.regions) == 1
+            assert result.regions[0].region == "US"
+            assert result.brightdata_available is True
+
+    @respx.mock
+    def test_list_regions_with_ip_type_filter(self):
+        respx.get("https://coordination.spacerouter.org/regions").mock(
+            return_value=httpx.Response(200, json={
+                "regions": [{"region": "KR", "ip_types": ["residential"]}],
+                "brightdata_available": False,
+            })
+        )
+        with SpaceRouter("sr_live_test") as client:
+            result = client.list_regions(ip_type="residential")
+            assert len(result.regions) == 1
+
+    @respx.mock
+    def test_list_regions_empty(self):
+        respx.get("https://coordination.spacerouter.org/regions").mock(
+            return_value=httpx.Response(200, json={
+                "regions": [],
+                "brightdata_available": False,
+            })
+        )
+        with SpaceRouter("sr_live_test") as client:
+            result = client.list_regions()
+            assert result.regions == []
+
+    @respx.mock
+    def test_list_regions_error(self):
+        mock_resp = httpx.Response(500, text="Internal Error")
+        mock_resp.request = httpx.Request("GET", "https://coordination.spacerouter.org/regions")
+        respx.get("https://coordination.spacerouter.org/regions").mock(return_value=mock_resp)
+        with SpaceRouter("sr_live_test") as client:
+            with pytest.raises(httpx.HTTPStatusError):
+                client.list_regions()
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_async_list_regions(self):
+        respx.get("https://coordination.spacerouter.org/regions").mock(
+            return_value=httpx.Response(200, json={
+                "regions": [{"region": "DE", "ip_types": ["hosting"]}],
+                "brightdata_available": True,
+            })
+        )
+        async with AsyncSpaceRouter("sr_live_test") as client:
+            result = await client.list_regions()
+            assert len(result.regions) == 1
+
+
 class TestIpTypeRouting:
     def test_ip_type_stored(self):
         client = SpaceRouter("sr_live_test", ip_type="residential")

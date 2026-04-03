@@ -377,3 +377,43 @@ describe("SpaceRouter", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// listRegions
+// ---------------------------------------------------------------------------
+
+describe("listRegions", () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  beforeEach(() => { fetchSpy = vi.fn(); vi.stubGlobal("fetch", fetchSpy); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("calls GET /regions on coordination API", async () => {
+    fetchSpy.mockResolvedValue(makeResponse(200, {
+      body: { regions: [{ region: "US", ip_types: ["residential"] }], brightdata_available: true },
+    }));
+    const client = new SpaceRouter("sr_live_test", { coordinationApiUrl: "https://coord.test" });
+    const result = await client.listRegions();
+    expect(result.regions).toHaveLength(1);
+    expect(result.regions[0].region).toBe("US");
+    expect(result.brightdata_available).toBe(true);
+    expect(fetchSpy.mock.calls[0][0]).toBe("https://coord.test/regions");
+    client.close();
+  });
+
+  it("passes ip_type query param", async () => {
+    fetchSpy.mockResolvedValue(makeResponse(200, {
+      body: { regions: [], brightdata_available: false },
+    }));
+    const client = new SpaceRouter("sr_live_test", { coordinationApiUrl: "https://coord.test" });
+    await client.listRegions("residential");
+    expect(fetchSpy.mock.calls[0][0]).toContain("ip_type=residential");
+    client.close();
+  });
+
+  it("throws on error response", async () => {
+    fetchSpy.mockResolvedValue(new Response("err", { status: 500 }));
+    const client = new SpaceRouter("sr_live_test");
+    await expect(client.listRegions()).rejects.toThrow("Failed to list regions");
+    client.close();
+  });
+});
+

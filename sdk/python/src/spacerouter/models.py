@@ -206,6 +206,25 @@ class VouchingSignature(BaseModel):
     timestamp: int
 
 
+# ---------------------------------------------------------------------------
+# Regions discovery
+# ---------------------------------------------------------------------------
+
+
+class RegionInfo(BaseModel):
+    """Available region with its IP types from ``GET /regions``."""
+
+    region: str
+    ip_types: list[str]
+
+
+class RegionsResponse(BaseModel):
+    """Response from ``GET /regions``."""
+
+    regions: list[RegionInfo]
+    brightdata_available: bool
+
+
 class ProxyResponse:
     """Thin wrapper around :class:`httpx.Response` with SpaceRouter metadata.
 

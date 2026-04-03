@@ -23,6 +23,8 @@ export interface SpaceRouterOptions {
   ipType?: IpType;
   /** Request timeout in milliseconds. Default: `30_000` */
   timeout?: number;
+  /** Coordination API URL for region discovery. Default: `"https://coordination.spacerouter.org"` */
+  coordinationApiUrl?: string;
 }
 
 /** Options for the {@link SpaceRouterAdmin} constructor. */
@@ -187,6 +189,22 @@ export interface VouchingSignature {
   staking_address: string;
   signature: string;
   timestamp: number;
+}
+
+// ---------------------------------------------------------------------------
+// Regions discovery
+// ---------------------------------------------------------------------------
+
+/** Available region with its IP types from `GET /regions`. */
+export interface RegionInfo {
+  region: string;
+  ip_types: string[];
+}
+
+/** Response from `GET /regions`. */
+export interface RegionsResponse {
+  regions: RegionInfo[];
+  brightdata_available: boolean;
 }
 
 // ---------------------------------------------------------------------------

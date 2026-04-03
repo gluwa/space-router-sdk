@@ -31,6 +31,8 @@ export type {
   Node,
   NodeConnectivityType,
   NodeStatus,
+  RegionInfo,
+  RegionsResponse,
   RegisterChallenge,
   RegisterResult,
   SpaceRouterAdminOptions,
