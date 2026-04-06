@@ -14,11 +14,9 @@ import {
   UpstreamError,
 } from "./errors.js";
 import type { IpType, SpaceRouterOptions } from "./models.js";
-import type { RegionsResponse } from "./models.js";
 import { ProxyResponse } from "./models.js";
 
 const DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org:8080";
-const DEFAULT_COORDINATION_URL = "https://coordination.spacerouter.org";
 const DEFAULT_TIMEOUT = 30_000;
 const REGION_RE = /^[A-Z]{2}$/;
 
@@ -135,7 +133,6 @@ export class SpaceRouter {
   private readonly _region: string | undefined;
   private readonly _ipType: IpType | undefined;
   private readonly _timeout: number;
-  private readonly _coordinationApiUrl: string;
   private readonly _agent: ProxyAgent | SocksProxyAgent;
 
   constructor(apiKey: string, options?: SpaceRouterOptions) {
@@ -146,7 +143,6 @@ export class SpaceRouter {
     this._ipType = options?.ipType;
     if (this._region) validateRegion(this._region);
     this._timeout = options?.timeout ?? DEFAULT_TIMEOUT;
-    this._coordinationApiUrl = options?.coordinationApiUrl ?? DEFAULT_COORDINATION_URL;
     this._agent = buildAgent(apiKey, this._gatewayUrl, this._protocol);
   }
 
@@ -212,28 +208,6 @@ export class SpaceRouter {
     return this.request("HEAD", url, options);
   }
 
-  // -- Regions discovery ----------------------------------------------------
-
-  /** List available regions and IP types from currently online nodes. */
-  async listRegions(ipType?: string): Promise<RegionsResponse> {
-    const url = new URL(`${this._coordinationApiUrl}/regions`);
-    if (ipType) url.searchParams.set("ip_type", ipType);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this._timeout);
-    try {
-      const response = await fetch(url.toString(), {
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to list regions: ${response.status} ${response.statusText}`);
-      }
-      return (await response.json()) as RegionsResponse;
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
   // -- Routing --------------------------------------------------------------
 
   /** Return a new client with different routing preferences. */
@@ -247,7 +221,6 @@ export class SpaceRouter {
       region: options.region,
       ipType: options.ipType,
       timeout: this._timeout,
-      coordinationApiUrl: this._coordinationApiUrl,
     });
   }
 

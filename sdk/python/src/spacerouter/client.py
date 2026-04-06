@@ -18,10 +18,9 @@ from spacerouter.exceptions import (
     RateLimitError,
     UpstreamError,
 )
-from spacerouter.models import ProxyResponse, RegionsResponse
+from spacerouter.models import ProxyResponse
 
 _DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org:8080"
-_DEFAULT_COORDINATION_URL = "https://coordination.spacerouter.org"
 
 _REGION_RE = __import__("re").compile(r"^[A-Z]{2}$")
 
@@ -138,7 +137,6 @@ class SpaceRouter:
         region: str | None = None,
         ip_type: str | None = None,
         timeout: float = 30.0,
-        coordination_api_url: str = _DEFAULT_COORDINATION_URL,
         **httpx_kwargs: Any,
     ) -> None:
         self._api_key = api_key
@@ -147,7 +145,6 @@ class SpaceRouter:
         self._region = region
         self._ip_type = ip_type
         self._timeout = timeout
-        self._coordination_api_url = coordination_api_url
 
         verify = httpx_kwargs.pop("verify", True)
         proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
@@ -181,21 +178,6 @@ class SpaceRouter:
     def head(self, url: str, **kwargs: Any) -> ProxyResponse:
         return self.request("HEAD", url, **kwargs)
 
-    # -- Regions discovery --------------------------------------------------
-
-    def list_regions(self, ip_type: str | None = None) -> RegionsResponse:
-        """List available regions and IP types from currently online nodes."""
-        params: dict[str, str] = {}
-        if ip_type:
-            params["ip_type"] = ip_type
-        response = httpx.get(
-            f"{self._coordination_api_url}/regions",
-            params=params,
-            timeout=self._timeout,
-        )
-        response.raise_for_status()
-        return RegionsResponse.model_validate(response.json())
-
     # -- Routing ------------------------------------------------------------
 
     def with_routing(
@@ -212,7 +194,6 @@ class SpaceRouter:
             region=region,
             ip_type=ip_type,
             timeout=self._timeout,
-            coordination_api_url=self._coordination_api_url,
         )
 
     # -- Lifecycle ----------------------------------------------------------
@@ -257,7 +238,6 @@ class AsyncSpaceRouter:
         region: str | None = None,
         ip_type: str | None = None,
         timeout: float = 30.0,
-        coordination_api_url: str = _DEFAULT_COORDINATION_URL,
         **httpx_kwargs: Any,
     ) -> None:
         self._api_key = api_key
@@ -266,7 +246,6 @@ class AsyncSpaceRouter:
         self._region = region
         self._ip_type = ip_type
         self._timeout = timeout
-        self._coordination_api_url = coordination_api_url
 
         verify = httpx_kwargs.pop("verify", True)
         proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
@@ -300,21 +279,6 @@ class AsyncSpaceRouter:
     async def head(self, url: str, **kwargs: Any) -> ProxyResponse:
         return await self.request("HEAD", url, **kwargs)
 
-    # -- Regions discovery --------------------------------------------------
-
-    async def list_regions(self, ip_type: str | None = None) -> RegionsResponse:
-        """List available regions and IP types from currently online nodes."""
-        params: dict[str, str] = {}
-        if ip_type:
-            params["ip_type"] = ip_type
-        async with httpx.AsyncClient(timeout=self._timeout) as http:
-            response = await http.get(
-                f"{self._coordination_api_url}/regions",
-                params=params,
-            )
-        response.raise_for_status()
-        return RegionsResponse.model_validate(response.json())
-
     # -- Routing ------------------------------------------------------------
 
     def with_routing(
@@ -331,7 +295,6 @@ class AsyncSpaceRouter:
             region=region,
             ip_type=ip_type,
             timeout=self._timeout,
-            coordination_api_url=self._coordination_api_url,
         )
 
     # -- Lifecycle ----------------------------------------------------------
