@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field, model_validator
 
 # ---------------------------------------------------------------------------
 # Routing & filtering types
@@ -57,7 +57,12 @@ class ApiKeyInfo(BaseModel):
 
 
 class Node(BaseModel):
-    """Proxy node returned by ``GET /nodes`` and ``POST /nodes``."""
+    """Proxy node returned by ``GET /nodes`` and ``POST /nodes``.
+
+    v0.2.0 uses three role-specific wallet addresses.  The legacy
+    ``wallet_address`` field is kept as a computed alias that returns
+    ``identity_address`` for backward compatibility.
+    """
 
     id: str
     endpoint_url: str
@@ -71,9 +76,26 @@ class Node(BaseModel):
     ip_type: str
     ip_region: str
     as_type: str
-    wallet_address: str
+    identity_address: str
+    staking_address: str
+    collection_address: str
     created_at: str
     gateway_ca_cert: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def wallet_address(self) -> str:
+        """Backward-compatible alias — returns ``identity_address``."""
+        return self.identity_address
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_wallet_address(cls, data: Any) -> Any:
+        """Accept legacy payloads that only contain ``wallet_address``."""
+        if isinstance(data, dict) and "wallet_address" in data:
+            for field in ("identity_address", "staking_address", "collection_address"):
+                data.setdefault(field, data["wallet_address"])
+        return data
 
 
 # ---------------------------------------------------------------------------
@@ -93,9 +115,27 @@ class RegisterResult(BaseModel):
 
     status: str
     node_id: str
-    address: str
+    identity_address: str
+    staking_address: str
+    collection_address: str
     endpoint_url: str
     gateway_ca_cert: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def address(self) -> str:
+        """Backward-compatible alias — returns ``identity_address``."""
+        return self.identity_address
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_address(cls, data: Any) -> Any:
+        """Accept legacy payloads that only contain ``address``."""
+        if isinstance(data, dict) and "address" in data:
+            data.setdefault("identity_address", data["address"])
+            data.setdefault("staking_address", data.get("identity_address", data["address"]))
+            data.setdefault("collection_address", data.get("identity_address", data["address"]))
+        return data
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +177,33 @@ class TransferPage(BaseModel):
     total_pages: int
     total_bytes: int
     transfers: list[Transfer]
+
+
+# ---------------------------------------------------------------------------
+# Credit line models (v0.2.0)
+# ---------------------------------------------------------------------------
+
+CreditLineStatusType = Literal["active", "suspended", "pending"]
+
+
+class CreditLineStatus(BaseModel):
+    """Credit line status from ``GET /credit-lines/{address}``."""
+
+    address: str
+    credit_limit: float
+    used: float
+    available: float
+    status: CreditLineStatusType
+    foundation_managed: bool
+
+
+class VouchingSignature(BaseModel):
+    """Vouching signature proving identity wallet vouches for staking wallet."""
+
+    identity_address: str
+    staking_address: str
+    signature: str
+    timestamp: int
 
 
 class ProxyResponse:

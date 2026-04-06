@@ -39,6 +39,11 @@ def load_or_create_identity(key_path: str = DEFAULT_IDENTITY_PATH) -> tuple[str,
     return private_key, account.address.lower()
 
 
+def get_address(private_key: str) -> str:
+    """Derive the checksummed-lower Ethereum address from a private key."""
+    return Account.from_key(private_key).address.lower()
+
+
 def sign_request(private_key: str, action: str, target: str) -> tuple[str, int]:
     """Sign a Space Router API request.
 
@@ -46,6 +51,20 @@ def sign_request(private_key: str, action: str, target: str) -> tuple[str, int]:
     """
     timestamp = int(time.time())
     message_text = f"space-router:{action}:{target}:{timestamp}"
+    message = encode_defunct(text=message_text)
+    signed = _w3.eth.account.sign_message(message, private_key=private_key)
+    return signed.signature.hex(), timestamp
+
+
+def create_vouching_signature(private_key: str, staking_address: str) -> tuple[str, int]:
+    """Sign a vouching message: identity wallet vouches for staking wallet.
+
+    Message format: ``space-router:vouch:{staking_address}:{timestamp}``
+
+    Returns ``(signature_hex, timestamp)``.
+    """
+    timestamp = int(time.time())
+    message_text = f"space-router:vouch:{staking_address.lower()}:{timestamp}"
     message = encode_defunct(text=message_text)
     signed = _w3.eth.account.sign_message(message, private_key=private_key)
     return signed.signature.hex(), timestamp

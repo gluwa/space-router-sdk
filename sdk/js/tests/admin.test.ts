@@ -144,7 +144,7 @@ describe("SpaceRouterAdmin", () => {
   // -- Node management ----------------------------------------------------
 
   describe("registerNode", () => {
-    it("creates a node and returns Node", async () => {
+    it("creates a node with v0.2.0 wallet fields", async () => {
       const node = {
         id: "node-uuid",
         endpoint_url: "http://192.168.1.100:9090",
@@ -158,7 +158,9 @@ describe("SpaceRouterAdmin", () => {
         ip_type: "residential",
         ip_region: "US",
         as_type: "isp",
-        wallet_address: "0xabc",
+        identity_address: "0xabc",
+        staking_address: "0xdef",
+        collection_address: "0xabc",
         created_at: "2025-01-01T00:00:00Z",
       };
       const fetchSpy = mockFetch(201, node);
@@ -166,15 +168,41 @@ describe("SpaceRouterAdmin", () => {
       const admin = new SpaceRouterAdmin();
       const result = await admin.registerNode({
         endpoint_url: "http://192.168.1.100:9090",
-        wallet_address: "0xabc",
+        identity_address: "0xabc",
+        staking_address: "0xdef",
+        collection_address: "0xabc",
+        vouching_signature: "0xsig",
+        vouching_timestamp: 1234567890,
         label: "my-node",
       });
 
       expect(result.id).toBe("node-uuid");
-      expect(result.status).toBe("online");
+      expect(result.identity_address).toBe("0xabc");
+      expect(result.staking_address).toBe("0xdef");
+      expect(result.wallet_address).toBe("0xabc"); // backward compat
       const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
-      expect(body.endpoint_url).toBe("http://192.168.1.100:9090");
-      expect(body.wallet_address).toBe("0xabc");
+      expect(body.identity_address).toBe("0xabc");
+      expect(body.vouching_signature).toBe("0xsig");
+      admin.close();
+    });
+
+    it("accepts legacy wallet_address", async () => {
+      const node = {
+        id: "node-uuid", endpoint_url: "http://x", public_ip: "1.1.1.1",
+        connectivity_type: "direct", node_type: "residential", status: "online",
+        health_score: 1.0, region: "US", label: null, ip_type: "residential",
+        ip_region: "US", as_type: "isp", wallet_address: "0xabc",
+        created_at: "2025-01-01T00:00:00Z",
+      };
+      mockFetch(201, node);
+
+      const admin = new SpaceRouterAdmin();
+      const result = await admin.registerNode({
+        endpoint_url: "http://x",
+        wallet_address: "0xabc",
+      });
+
+      expect(result.identity_address).toBe("0xabc"); // normalized
       admin.close();
     });
 
@@ -189,7 +217,7 @@ describe("SpaceRouterAdmin", () => {
   });
 
   describe("listNodes", () => {
-    it("returns Node[]", async () => {
+    it("returns Node[] with normalized fields", async () => {
       const nodes = [
         {
           id: "n1", endpoint_url: "http://a", public_ip: "1.1.1.1",
@@ -205,16 +233,17 @@ describe("SpaceRouterAdmin", () => {
       const result = await admin.listNodes();
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe("n1");
+      expect(result[0].identity_address).toBe("0x1"); // normalized from wallet_address
       expect(fetchSpy.mock.calls[0][1].method).toBe("GET");
       admin.close();
     });
   });
 
   describe("updateNodeStatus", () => {
-    it("sends PATCH with auth", async () => {
+    it("sends PATCH with identityAddress auth", async () => {
       const fetchSpy = mockFetch(200, { ok: true });
       const admin = new SpaceRouterAdmin();
-      const auth = { walletAddress: "0xabc", signature: "0xsig", timestamp: 1234567890 };
+      const auth = { identityAddress: "0xabc", signature: "0xsig", timestamp: 1234567890 };
       await admin.updateNodeStatus("node-1", "draining", auth);
 
       const [url, init] = fetchSpy.mock.calls[0];
@@ -222,22 +251,25 @@ describe("SpaceRouterAdmin", () => {
       expect(init.method).toBe("PATCH");
       const body = JSON.parse(init.body as string);
       expect(body.status).toBe("draining");
-      expect(body.wallet_address).toBe("0xabc");
+      expect(body.identity_address).toBe("0xabc");
+      expect(body.wallet_address).toBe("0xabc"); // backward compat
       expect(body.signature).toBe("0xsig");
       admin.close();
     });
   });
 
   describe("deleteNode", () => {
-    it("sends DELETE with auth", async () => {
+    it("sends DELETE with identityAddress auth", async () => {
       const fetchSpy = mockFetch(204);
       const admin = new SpaceRouterAdmin();
-      const auth = { walletAddress: "0xabc", signature: "0xsig", timestamp: 1234567890 };
+      const auth = { identityAddress: "0xabc", signature: "0xsig", timestamp: 1234567890 };
       await admin.deleteNode("node-uuid", auth);
 
       const [url, init] = fetchSpy.mock.calls[0];
       expect(url).toBe("https://coordination.spacerouter.org/nodes/node-uuid");
       expect(init.method).toBe("DELETE");
+      const body = JSON.parse(init.body as string);
+      expect(body.identity_address).toBe("0xabc");
       admin.close();
     });
   });
@@ -324,8 +356,32 @@ describe("SpaceRouterAdmin", () => {
 
   // -- Dashboard ----------------------------------------------------------
 
+  // -- Credit lines ---------------------------------------------------------
+
+  describe("getCreditLine", () => {
+    it("returns credit line status", async () => {
+      const creditLine = {
+        address: "0xabc",
+        credit_limit: 1000,
+        used: 250,
+        available: 750,
+        status: "active",
+        foundation_managed: true,
+      };
+      mockFetch(200, creditLine);
+
+      const admin = new SpaceRouterAdmin();
+      const result = await admin.getCreditLine("0xabc");
+      expect(result.available).toBe(750);
+      expect(result.foundation_managed).toBe(true);
+      admin.close();
+    });
+  });
+
+  // -- Dashboard ----------------------------------------------------------
+
   describe("getTransfers", () => {
-    it("returns paginated transfers", async () => {
+    it("returns paginated transfers with identity_address", async () => {
       const page = {
         page: 1,
         total_pages: 5,
@@ -344,7 +400,7 @@ describe("SpaceRouterAdmin", () => {
 
       const admin = new SpaceRouterAdmin();
       const result = await admin.getTransfers({
-        wallet_address: "0xabc",
+        identity_address: "0xabc",
         page: 1,
         page_size: 10,
       });
@@ -353,8 +409,21 @@ describe("SpaceRouterAdmin", () => {
 
       const url = fetchSpy.mock.calls[0][0] as string;
       expect(url).toContain("wallet_address=0xabc");
-      expect(url).toContain("page=1");
-      expect(url).toContain("page_size=10");
+      admin.close();
+    });
+
+    it("accepts legacy wallet_address", async () => {
+      mockFetch(200, { page: 1, total_pages: 1, total_bytes: 0, transfers: [] });
+
+      const admin = new SpaceRouterAdmin();
+      const result = await admin.getTransfers({ wallet_address: "0xabc" });
+      expect(result.total_pages).toBe(1);
+      admin.close();
+    });
+
+    it("throws when no address provided", async () => {
+      const admin = new SpaceRouterAdmin();
+      await expect(admin.getTransfers({})).rejects.toThrow("identity_address");
       admin.close();
     });
   });

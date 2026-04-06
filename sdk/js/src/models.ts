@@ -55,7 +55,12 @@ export interface ApiKeyInfo {
 // Node management
 // ---------------------------------------------------------------------------
 
-/** Proxy node returned by `GET /nodes` and `POST /nodes`. */
+/**
+ * Proxy node returned by `GET /nodes` and `POST /nodes`.
+ *
+ * v0.2.0 uses three role-specific wallet addresses. The legacy
+ * `wallet_address` field is kept for backward compatibility.
+ */
 export interface Node {
   id: string;
   endpoint_url: string;
@@ -69,9 +74,25 @@ export interface Node {
   ip_type: string;
   ip_region: string;
   as_type: string;
+  identity_address: string;
+  staking_address: string;
+  collection_address: string;
+  /** @deprecated Use identity_address. Kept for backward compatibility. */
   wallet_address: string;
   created_at: string;
   gateway_ca_cert?: string;
+}
+
+/** Normalize a raw node response, filling v0.2.0 fields from legacy wallet_address if needed. */
+export function normalizeNode(raw: Record<string, unknown>): Node {
+  const wallet = (raw.wallet_address ?? raw.identity_address ?? "") as string;
+  return {
+    ...raw,
+    identity_address: (raw.identity_address ?? wallet) as string,
+    staking_address: (raw.staking_address ?? wallet) as string,
+    collection_address: (raw.collection_address ?? wallet) as string,
+    wallet_address: wallet,
+  } as Node;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,9 +109,27 @@ export interface RegisterChallenge {
 export interface RegisterResult {
   status: string;
   node_id: string;
-  address: string;
+  identity_address: string;
+  staking_address: string;
+  collection_address: string;
   endpoint_url: string;
   gateway_ca_cert?: string;
+  /** @deprecated Use identity_address. */
+  address: string;
+}
+
+/** Normalize a raw register result, filling v0.2.0 fields from legacy address if needed. */
+export function normalizeRegisterResult(
+  raw: Record<string, unknown>,
+): RegisterResult {
+  const addr = (raw.address ?? raw.identity_address ?? "") as string;
+  return {
+    ...raw,
+    identity_address: (raw.identity_address ?? addr) as string,
+    staking_address: (raw.staking_address ?? addr) as string,
+    collection_address: (raw.collection_address ?? addr) as string,
+    address: addr,
+  } as RegisterResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +166,32 @@ export interface TransferPage {
   total_bytes: number;
   transfers: Transfer[];
 }
+
+// ---------------------------------------------------------------------------
+// Credit line (v0.2.0)
+// ---------------------------------------------------------------------------
+
+/** Credit line status from `GET /credit-lines/{address}`. */
+export interface CreditLineStatus {
+  address: string;
+  credit_limit: number;
+  used: number;
+  available: number;
+  status: "active" | "suspended" | "pending";
+  foundation_managed: boolean;
+}
+
+/** Vouching signature proving identity wallet vouches for staking wallet. */
+export interface VouchingSignature {
+  identity_address: string;
+  staking_address: string;
+  signature: string;
+  timestamp: number;
+}
+
+// ---------------------------------------------------------------------------
+// Proxy response
+// ---------------------------------------------------------------------------
 
 /**
  * Thin wrapper around `Response` with SpaceRouter metadata.
