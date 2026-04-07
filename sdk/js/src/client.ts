@@ -57,7 +57,7 @@ function buildAgent(
     return new SocksProxyAgent(socksUrl);
   }
 
-  const port = parsed.port || "8080";
+  const port = parsed.port || (scheme === "https" ? "443" : "8080");
   const proxyUrl = `${scheme}://${host}:${port}`;
   // undici sends `proxy-authorization` (lowercase) but some proxy servers
   // require title-case `Proxy-Authorization`.  Use explicit headers instead

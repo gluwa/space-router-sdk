@@ -50,7 +50,7 @@ def _build_proxy(
         proxy_url = f"socks5://{api_key}:@{host}:{port}"
         return proxy_url
 
-    port = parsed.port or 8080
+    port = parsed.port or (443 if scheme == "https" else 8080)
     proxy_url = f"{scheme}://{host}:{port}"
 
     # Always send an explicit Proxy-Authorization header.  httpx stores
