@@ -117,6 +117,27 @@ describe("proxy error checking", () => {
     client.close();
   });
 
+  it("407 during HTTPS CONNECT throws AuthenticationError", async () => {
+    // undici converts a 407 during tunnel setup into TypeError("fetch failed")
+    const cause = new Error("proxy authentication required");
+    fetchSpy.mockRejectedValue(
+      new TypeError("fetch failed", { cause }),
+    );
+
+    const client = new SpaceRouter("sr_live_bad_key");
+    await expect(client.get("https://example.com")).rejects.toThrow(
+      AuthenticationError,
+    );
+
+    try {
+      await client.get("https://example.com");
+    } catch (e) {
+      expect(e).toBeInstanceOf(AuthenticationError);
+      expect((e as AuthenticationError).statusCode).toBe(407);
+    }
+    client.close();
+  });
+
   it("429 throws RateLimitError with retryAfter", async () => {
     fetchSpy.mockResolvedValue(
       makeResponse(429, {

@@ -11,6 +11,7 @@ import {
   AuthenticationError,
   NoNodesAvailableError,
   RateLimitError,
+  SpaceRouterError,
   UpstreamError,
 } from "./errors.js";
 import type { IpType, SpaceRouterOptions } from "./models.js";
@@ -179,6 +180,21 @@ export class SpaceRouter {
 
       await checkProxyErrors(response);
       return new ProxyResponse(response);
+    } catch (err) {
+      if (err instanceof SpaceRouterError) throw err;
+
+      // undici converts a 407 during HTTPS CONNECT tunnel setup into a
+      // TypeError("fetch failed") instead of returning a Response object.
+      // Detect this and surface the proper AuthenticationError.
+      if (err instanceof TypeError && err.message === "fetch failed") {
+        const cause = (err as { cause?: Error }).cause;
+        if (cause?.message?.toLowerCase().includes("proxy authentication required")) {
+          throw new AuthenticationError("Invalid or missing API key", {
+            statusCode: 407,
+          });
+        }
+      }
+      throw err;
     } finally {
       clearTimeout(timeoutId);
     }
