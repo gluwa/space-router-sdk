@@ -24,7 +24,7 @@ COORDINATION_URL = os.environ.get(
     "SR_COORDINATION_API_URL", "https://coordination.spacerouter.org"
 )
 GATEWAY_URL = os.environ.get(
-    "SR_GATEWAY_URL", "https://gateway.spacerouter.org:8080"
+    "SR_GATEWAY_URL", "https://gateway.spacerouter.org"
 )
 
 # A billing-provisioned API key for proxy tests.

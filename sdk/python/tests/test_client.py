@@ -198,7 +198,7 @@ class TestProxyResponse:
 class TestSpaceRouter:
     def test_default_gateway(self):
         client = SpaceRouter("sr_live_test")
-        assert client._gateway_url == "https://gateway.spacerouter.org:8080"
+        assert client._gateway_url == "https://gateway.spacerouter.org"
         assert client._protocol == "http"
         client.close()
 

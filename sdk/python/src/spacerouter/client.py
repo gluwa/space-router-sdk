@@ -20,7 +20,7 @@ from spacerouter.exceptions import (
 )
 from spacerouter.models import ProxyResponse
 
-_DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org:8080"
+_DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org"
 
 _REGION_RE = __import__("re").compile(r"^[A-Z]{2}$")
 

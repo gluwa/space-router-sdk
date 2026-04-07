@@ -13,7 +13,7 @@ export type NodeConnectivityType = "direct" | "upnp" | "external_provider";
 
 /** Options for the {@link SpaceRouter} constructor. */
 export interface SpaceRouterOptions {
-  /** Proxy gateway URL. Default: `"https://gateway.spacerouter.org:8080"` */
+  /** Proxy gateway URL. Default: `"https://gateway.spacerouter.org"` */
   gatewayUrl?: string;
   /** Proxy protocol. Default: `"http"` */
   protocol?: "http" | "socks5";
