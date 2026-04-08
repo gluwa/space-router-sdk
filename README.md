@@ -48,6 +48,32 @@ spacerouter config set api-key sr_...
 spacerouter request get https://httpbin.org/ip
 ```
 
+## Client Identity
+
+All packages support wallet-based authentication as an alternative to API keys. See the [Security Guide](docs/security.md) for key storage best practices.
+
+```python
+# Python
+from spacerouter import ClientIdentity, SpaceRouter
+identity = ClientIdentity.from_keystore("~/.spacerouter/identity.json", "passphrase")
+with SpaceRouter(identity=identity) as client:
+    response = client.get("https://httpbin.org/ip")
+```
+
+```typescript
+// JavaScript
+import { ClientIdentity, SpaceRouter } from "@spacenetwork/spacerouter";
+const identity = ClientIdentity.fromKeystore("~/.spacerouter/identity.json", "passphrase");
+const client = new SpaceRouter({ identity });
+const response = await client.get("https://httpbin.org/ip");
+```
+
+```bash
+# CLI
+spacerouter identity generate --passphrase
+spacerouter identity show --passphrase
+```
+
 ## Development
 
 ```bash

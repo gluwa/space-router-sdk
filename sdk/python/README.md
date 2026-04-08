@@ -107,6 +107,48 @@ with SpaceRouter("sr_live_xxx") as client:
 
 Note: HTTP errors from the target website (e.g. 404, 500) are **not** raised as exceptions. Only proxy-layer errors produce exceptions.
 
+## Client Identity (Wallet Authentication)
+
+As an alternative to API keys, you can authenticate using a client identity wallet:
+
+```python
+from spacerouter import ClientIdentity, SpaceRouter
+
+# Generate a new identity
+identity = ClientIdentity.generate(
+    keystore_path="~/.spacerouter/identity.json",
+    passphrase="my-secure-passphrase"
+)
+print(identity.address)  # 0x...
+
+# Load an existing identity
+identity = ClientIdentity.from_keystore(
+    "~/.spacerouter/identity.json",
+    passphrase="my-secure-passphrase"
+)
+
+# Use with SpaceRouter client
+with SpaceRouter(identity=identity) as client:
+    response = client.get("https://httpbin.org/ip")
+    print(response.json())
+```
+
+### Identity Methods
+
+```python
+# Sign arbitrary messages (EIP-191)
+signature = identity.sign_message("hello world")
+
+# Generate auth headers for Coordination API
+headers = identity.sign_auth_header()
+# {"X-Identity-Address": "0x...", "X-Identity-Signature": "0x...", "X-Timestamp": "..."}
+
+# Export to encrypted keystore
+identity.save_keystore("/path/to/backup.json", passphrase="backup-pass")
+```
+
+See [docs/identity.md](docs/identity.md) for the full API reference and [docs/security.md](../../docs/security.md) for key storage best practices.
+
 ## Configuration
 
 | Parameter | Default | Description |

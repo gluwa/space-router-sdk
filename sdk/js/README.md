@@ -105,6 +105,49 @@ try {
 
 Note: HTTP errors from the target website (e.g. 404, 500) are **not** thrown as exceptions. Only proxy-layer errors produce exceptions.
 
+## Client Identity (Wallet Authentication)
+
+As an alternative to API keys, you can authenticate using a client identity wallet:
+
+```ts
+import { ClientIdentity, SpaceRouter } from "@spacenetwork/spacerouter";
+
+// Generate a new identity
+const identity = ClientIdentity.generate();
+console.log(identity.address); // 0x...
+
+// Save with encryption
+identity.saveKeystore("~/.spacerouter/identity.json", "my-secure-passphrase");
+
+// Load an existing identity
+const loaded = ClientIdentity.fromKeystore(
+  "~/.spacerouter/identity.json",
+  "my-secure-passphrase"
+);
+
+// Use with SpaceRouter client
+const client = new SpaceRouter({ identity: loaded });
+const response = await client.get("https://httpbin.org/ip");
+console.log(await response.json());
+client.close();
+```
+
+### Identity Methods
+
+```ts
+// Sign arbitrary messages (EIP-191)
+const signature = await identity.signMessage("hello world");
+
+// Generate auth headers for Coordination API
+const headers = await identity.signAuthHeaders();
+// { "X-Identity-Address": "0x...", "X-Identity-Signature": "0x...", "X-Timestamp": "..." }
+
+// Export to encrypted keystore
+identity.saveKeystore("/path/to/backup.json", "backup-pass");
+```
+
+See [docs/identity.md](docs/identity.md) for the full API reference and [docs/security.md](../../docs/security.md) for key storage best practices.
+
 ## Configuration
 
 | Parameter    | Default                    | Description                              |

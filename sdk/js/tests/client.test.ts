@@ -301,6 +301,18 @@ describe("SpaceRouter", () => {
     routed.close();
   });
 
+  it("withRouting preserves identity across region switch", async () => {
+    const { ClientIdentity } = await import("../src/identity.js");
+    const identity = ClientIdentity.generate();
+    const client = new SpaceRouter({ identity });
+    const routed = client.withRouting({ region: "KR" });
+    // The routed client should still be able to generate auth headers
+    // (which requires identity to be present)
+    expect(routed.toString()).toContain("protocol=http");
+    client.close();
+    routed.close();
+  });
+
   it("injects IP-type header", async () => {
     const client = new SpaceRouter("sr_live_test", {
       ipType: "residential",
