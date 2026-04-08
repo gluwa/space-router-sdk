@@ -15,6 +15,7 @@ from spacerouter.identity import (
     load_or_create_identity,
     sign_request,
 )
+from spacerouter.escrow import EscrowClient
 from spacerouter.models import (
     ApiKey,
     ApiKeyInfo,
@@ -31,6 +32,7 @@ from spacerouter.models import (
 )
 
 __all__ = [
+    "EscrowClient",
     "SpaceRouter",
     "AsyncSpaceRouter",
     "SpaceRouterAdmin",

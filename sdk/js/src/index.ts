@@ -1,6 +1,19 @@
 /** SpaceRouter JavaScript SDK — route HTTP requests through residential IPs. */
 
 export { SpaceRouter } from "./client.js";
+export {
+  EscrowClient,
+  ESCROW_ABI,
+  RECEIPT_EIP712_DOMAIN,
+  receiptTypes,
+} from "./escrow.js";
+export type {
+  Receipt as EscrowReceipt,
+  SignedReceipt as EscrowSignedReceipt,
+  PendingWithdrawal,
+  SettlementResult,
+  EscrowClientOptions,
+} from "./escrow.js";
 export type { RequestOptions } from "./client.js";
 
 export { SpaceRouterAdmin } from "./admin.js";
