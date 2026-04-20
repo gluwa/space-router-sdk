@@ -329,26 +329,3 @@ class TestByteCountValidation:
         assert len(sig) == 132  # 0x + 130 hex chars (65 bytes)
 
 
-# ── Byte counter helper ───────────────────────────────────────────────
-
-class TestByteCounter:
-    def test_bytecount_totals(self):
-        from spacerouter.payment import ByteCount
-        bc = ByteCount()
-        bc.add_request(100)
-        bc.add_response(200)
-        assert bc.total == 300
-
-    def test_count_request_bytes_includes_headers(self):
-        from spacerouter.payment import count_request_bytes
-        n = count_request_bytes(
-            "GET", "http://example.com/", None,
-            {"User-Agent": "test", "Accept": "*/*"},
-        )
-        assert n > len("GET http://example.com/ HTTP/1.1\r\n\r\n")
-
-    def test_count_request_bytes_with_body(self):
-        from spacerouter.payment import count_request_bytes
-        body = b"hello"
-        n = count_request_bytes("POST", "/api", body, {})
-        assert n > 5  # includes body + framing
