@@ -81,18 +81,19 @@ export async function signRequest(
 }
 
 /**
- * Sign a vouching message: identity wallet vouches for staking wallet.
+ * Sign a vouching message: identity wallet vouches for staking + collection wallets.
  *
- * Message format: `space-router:vouch:{stakingAddress}:{timestamp}`
+ * Message format: `space-router:vouch:{stakingAddress}:{collectionAddress}:{timestamp}`
  *
  * Returns `{ signature, timestamp }`.
  */
 export async function createVouchingSignature(
   privateKey: `0x${string}`,
   stakingAddress: string,
+  collectionAddress: string,
 ): Promise<{ signature: string; timestamp: number }> {
   const timestamp = Math.floor(Date.now() / 1000);
-  const message = `space-router:vouch:${stakingAddress.toLowerCase()}:${timestamp}`;
+  const message = `space-router:vouch:${stakingAddress.toLowerCase()}:${collectionAddress.toLowerCase()}:${timestamp}`;
   const account = privateKeyToAccount(privateKey);
   const signature = await account.signMessage({ message });
   return { signature, timestamp };

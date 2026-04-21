@@ -56,15 +56,17 @@ def sign_request(private_key: str, action: str, target: str) -> tuple[str, int]:
     return signed.signature.hex(), timestamp
 
 
-def create_vouching_signature(private_key: str, staking_address: str) -> tuple[str, int]:
-    """Sign a vouching message: identity wallet vouches for staking wallet.
+def create_vouching_signature(
+    private_key: str, staking_address: str, collection_address: str,
+) -> tuple[str, int]:
+    """Sign a vouching message: identity wallet vouches for staking + collection wallets.
 
-    Message format: ``space-router:vouch:{staking_address}:{timestamp}``
+    Message format: ``space-router:vouch:{staking_address}:{collection_address}:{timestamp}``
 
     Returns ``(signature_hex, timestamp)``.
     """
     timestamp = int(time.time())
-    message_text = f"space-router:vouch:{staking_address.lower()}:{timestamp}"
+    message_text = f"space-router:vouch:{staking_address.lower()}:{collection_address.lower()}:{timestamp}"
     message = encode_defunct(text=message_text)
     signed = _w3.eth.account.sign_message(message, private_key=private_key)
     return signed.signature.hex(), timestamp

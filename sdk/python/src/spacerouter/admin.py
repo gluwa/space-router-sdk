@@ -143,7 +143,7 @@ class SpaceRouterAdmin:
 
         identity_addr = get_address(private_key)
         coll_addr = collection_address or identity_addr
-        sig, ts = create_vouching_signature(private_key, staking_address)
+        sig, ts = create_vouching_signature(private_key, staking_address, coll_addr)
         return self.register_node(
             endpoint_url=endpoint_url,
             identity_address=identity_addr,
@@ -404,7 +404,7 @@ class AsyncSpaceRouterAdmin:
 
         identity_addr = get_address(private_key)
         coll_addr = collection_address or identity_addr
-        sig, ts = create_vouching_signature(private_key, staking_address)
+        sig, ts = create_vouching_signature(private_key, staking_address, coll_addr)
         return await self.register_node(
             endpoint_url=endpoint_url,
             identity_address=identity_addr,

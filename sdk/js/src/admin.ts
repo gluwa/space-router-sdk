@@ -158,6 +158,7 @@ export class SpaceRouterAdmin {
     const { signature, timestamp } = await createVouchingSignature(
       params.privateKey,
       params.stakingAddress,
+      collectionAddress,
     );
     return this.registerNode({
       endpoint_url: params.endpointUrl,
