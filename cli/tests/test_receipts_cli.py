@@ -34,7 +34,7 @@ def settle_env(monkeypatch):
     # syntactically valid key (32-byte hex).
     monkeypatch.setenv("SR_ESCROW_PRIVATE_KEY", "0x" + "1" * 64)
     monkeypatch.setenv("SR_GATEWAY_MANAGEMENT_URL",
-                       "https://spacerouter-proxy-gateway-test.fly.dev")
+                       "https://gateway.example.com")
 
 
 def _pending_payload(n: int = 2) -> dict:

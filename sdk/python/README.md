@@ -30,8 +30,8 @@ the SDK.
 
 ```bash
 # Testnet defaults — see internal-docs/v1.5-consumer-protocol.md §1.
-export SR_GATEWAY_URL="https://spacerouter-proxy-gateway-test.fly.dev"
-export SR_GATEWAY_MANAGEMENT_URL="https://spacerouter-proxy-gateway-test.fly.dev"
+export SR_GATEWAY_URL="https://your-gateway.example.com"
+export SR_GATEWAY_MANAGEMENT_URL="https://your-gateway.example.com"
 export SR_ESCROW_CHAIN_RPC="https://rpc.cc3-testnet.creditcoin.network"
 export SR_ESCROW_CONTRACT_ADDRESS="0xC5740e4e9175301a24FB6d22bA184b8ec0762852"
 export SR_ESCROW_CHAIN_ID="102031"
@@ -118,7 +118,7 @@ import asyncio
 from spacerouter import SpaceRouter
 from spacerouter.payment import SpaceRouterSPACE
 
-PROXY = "https://spacerouter-proxy-gateway-test.fly.dev"
+PROXY = "https://your-gateway.example.com"
 GATEWAY_MGMT = PROXY  # same host, separate routes
 ESCROW = "0xC5740e4e9175301a24FB6d22bA184b8ec0762852"
 

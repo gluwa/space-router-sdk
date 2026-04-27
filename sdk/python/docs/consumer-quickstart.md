@@ -150,13 +150,13 @@ file an issue.
 when the CLI proxies a request.
 
 **Cause.** Almost always a malformed `SR_GATEWAY_URL`. The proxy is a
-**CONNECT** proxy on port 443 of
-`spacerouter-proxy-gateway-test.fly.dev`. Common typos:
+**CONNECT** proxy on port 443 of the gateway host you point at. Common
+typos:
 
-* `http://...` instead of `https://...` — the testnet gateway only
-  speaks TLS on 443.
+* `http://...` instead of `https://...` — the gateway only speaks TLS
+  on 443.
 * Trailing slashes interpreted by your shell — quote the value:
-  `export SR_GATEWAY_URL="https://spacerouter-proxy-gateway-test.fly.dev"`.
+  `export SR_GATEWAY_URL="https://your-gateway.example.com"`.
 * Pointing at `:8081` (the management port) — that's only used by
   `SR_GATEWAY_MANAGEMENT_URL` and the broker; the proxy CONNECT lives
   on 443.
@@ -166,8 +166,8 @@ when the CLI proxies a request.
 **Fix.**
 
 ```bash
-export SR_GATEWAY_URL="https://spacerouter-proxy-gateway-test.fly.dev"
-export SR_GATEWAY_MANAGEMENT_URL="https://spacerouter-proxy-gateway-test.fly.dev"
+export SR_GATEWAY_URL="https://your-gateway.example.com"
+export SR_GATEWAY_MANAGEMENT_URL="https://your-gateway.example.com"
 spacerouter status        # quick sanity check
 ```
 

@@ -55,8 +55,7 @@ GatewayMgmtOpt = Annotated[
     typer.Option(
         "--gateway",
         help=(
-            "Gateway management URL (e.g. "
-            "https://spacerouter-proxy-gateway-test.fly.dev). "
+            "Gateway management URL. "
             "Env: SR_GATEWAY_MANAGEMENT_URL."
         ),
     ),
