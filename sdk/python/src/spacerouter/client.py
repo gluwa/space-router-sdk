@@ -228,10 +228,11 @@ class SpaceRouter:
         self._payment = payment
         self._auto_settle = auto_settle
 
-        verify = httpx_kwargs.pop("verify", True)
+        self._verify = httpx_kwargs.pop("verify", True)
+        self._httpx_kwargs = httpx_kwargs
         proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
         self._client = httpx.Client(
-            proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
+            proxy=proxy, timeout=timeout, verify=self._verify, **httpx_kwargs,
         )
 
     # -- HTTP methods -------------------------------------------------------
@@ -240,21 +241,42 @@ class SpaceRouter:
         """Send a request through the SpaceRouter proxy.
 
         When the client was constructed with ``payment=...`` the v1.5
-        payment auth headers are fetched fresh per call and merged into
-        ``headers`` (user values lose on collision). When ``auto_settle``
-        is also ``True``, ``payment.sync_receipts()`` is run after a
-        successful response. Settlement failures are logged at WARN by
-        default; if the payment client was built with
-        ``strict_settlement=True``, :class:`SettlementRejected` propagates.
+        payment auth headers are fetched fresh per call. They MUST land
+        on the proxy CONNECT request (not the tunnelled inner request)
+        so the gateway can read them — the inner request is TLS-encrypted
+        and opaque to the gateway. We achieve this by building a fresh
+        ``httpx.Proxy(headers=...)`` per call and constructing a
+        throwaway ``httpx.Client`` for that single request.
+
+        When ``auto_settle`` is also ``True``, ``payment.sync_receipts()``
+        is run after a successful response. Settlement failures are
+        logged at WARN by default; if the payment client was built with
+        ``strict_settlement=True``, :class:`SettlementRejected`
+        propagates.
         """
         if self._payment is not None:
             challenge = _run_async(self._payment.request_challenge())
             payment_headers = self._payment.build_auth_headers(challenge)
-            kwargs["headers"] = _merge_payment_headers(
-                kwargs.get("headers"), payment_headers,
+            # Rebuild the proxy with payment headers stamped onto CONNECT.
+            # Fresh challenges are single-use, so a per-request client is
+            # the simplest correct shape; httpx.Client construction is
+            # cheap (no connect happens until .request() is called).
+            proxy = _build_proxy(
+                self._api_key, self._gateway_url, self._protocol,
+                self._region, self._ip_type,
             )
-
-        response = self._client.request(method, url, **kwargs)
+            if isinstance(proxy, httpx.Proxy):
+                merged_headers = _merge_payment_headers(
+                    proxy.headers, payment_headers,
+                )
+                proxy = httpx.Proxy(str(proxy.url), headers=merged_headers)
+            with httpx.Client(
+                proxy=proxy, timeout=self._timeout, verify=self._verify,
+                **self._httpx_kwargs,
+            ) as paid_client:
+                response = paid_client.request(method, url, **kwargs)
+        else:
+            response = self._client.request(method, url, **kwargs)
         _check_proxy_errors(response)
         proxy_resp = ProxyResponse(response)
 
@@ -365,10 +387,11 @@ class AsyncSpaceRouter:
         self._payment = payment
         self._auto_settle = auto_settle
 
-        verify = httpx_kwargs.pop("verify", True)
+        self._verify = httpx_kwargs.pop("verify", True)
+        self._httpx_kwargs = httpx_kwargs
         proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
         self._client = httpx.AsyncClient(
-            proxy=proxy, timeout=timeout, verify=verify, **httpx_kwargs,
+            proxy=proxy, timeout=timeout, verify=self._verify, **httpx_kwargs,
         )
 
     # -- HTTP methods -------------------------------------------------------
@@ -377,21 +400,33 @@ class AsyncSpaceRouter:
         """Send a request through the SpaceRouter proxy.
 
         When the client was constructed with ``payment=...`` the v1.5
-        payment auth headers are fetched fresh per call and merged into
-        ``headers`` (user values lose on collision). When ``auto_settle``
-        is also ``True``, ``payment.sync_receipts()`` is awaited after a
-        successful response. Settlement failures are logged at WARN by
-        default; if the payment client was built with
-        ``strict_settlement=True``, :class:`SettlementRejected` propagates.
+        payment auth headers are fetched fresh per call. They MUST land
+        on the proxy CONNECT request (not the tunnelled inner request)
+        so the gateway can read them — the inner request is TLS-encrypted
+        and opaque to the gateway. Mirror of the sync ``SpaceRouter``
+        fix: build a fresh ``httpx.Proxy(headers=...)`` per call and
+        construct a throwaway ``httpx.AsyncClient`` for that single
+        request.
         """
         if self._payment is not None:
             challenge = await self._payment.request_challenge()
             payment_headers = self._payment.build_auth_headers(challenge)
-            kwargs["headers"] = _merge_payment_headers(
-                kwargs.get("headers"), payment_headers,
+            proxy = _build_proxy(
+                self._api_key, self._gateway_url, self._protocol,
+                self._region, self._ip_type,
             )
-
-        response = await self._client.request(method, url, **kwargs)
+            if isinstance(proxy, httpx.Proxy):
+                merged_headers = _merge_payment_headers(
+                    proxy.headers, payment_headers,
+                )
+                proxy = httpx.Proxy(str(proxy.url), headers=merged_headers)
+            async with httpx.AsyncClient(
+                proxy=proxy, timeout=self._timeout, verify=self._verify,
+                **self._httpx_kwargs,
+            ) as paid_client:
+                response = await paid_client.request(method, url, **kwargs)
+        else:
+            response = await self._client.request(method, url, **kwargs)
         _check_proxy_errors(response)
         proxy_resp = ProxyResponse(response)
 

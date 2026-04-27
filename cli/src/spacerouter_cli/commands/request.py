@@ -246,16 +246,13 @@ def _do_paid_request(
         chain_id=cid,
         escrow_contract=contract,
     )
-    challenge = asyncio.run(consumer.request_challenge())
-    auth_headers = consumer.build_auth_headers(challenge)
-    merged_headers = {**kwargs.get("headers", {}), **auth_headers}
-    request_kwargs = dict(kwargs)
-    request_kwargs["headers"] = merged_headers
 
-    # The proxy still expects *some* value in Proxy-Authorization for
-    # routing; the SDK fills it from api_key. In v1.5 escrow mode the
-    # gateway accepts the wallet address as the auth principal, so we
-    # pass the wallet address (lowercase 0x-hex) as the api_key argument.
+    # Delegate payment-header injection to SpaceRouter(payment=...) — it
+    # places the headers on the proxy CONNECT (where the gateway can
+    # read them) rather than on the inner TLS-tunneled request (which
+    # the gateway can't see). Setting `auto_settle` here also runs
+    # `sync_receipts()` after a successful response.
+    settle_summary: dict | None = None
     paid_principal = consumer.address.lower()
 
     with SpaceRouter(
@@ -265,10 +262,11 @@ def _do_paid_request(
         ip_type=ip_type,
         timeout=cfg.timeout,
         follow_redirects=follow_redirects,
+        payment=consumer,
+        auto_settle=False,  # we run sync_receipts() ourselves to surface the summary
     ) as client:
-        resp = client.request(method, url, **request_kwargs)
+        resp = client.request(method, url, **kwargs)
 
-    settle_summary: dict | None = None
     if auto_settle:
         try:
             settle_summary = asyncio.run(consumer.sync_receipts())
