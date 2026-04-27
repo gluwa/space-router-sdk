@@ -1,0 +1,64 @@
+name: E2E (testnet)
+
+# Manual trigger only — never auto-run on push/PR. The suite hits the
+# live testnet gateway and the TokenPaymentEscrow contract on Creditcoin,
+# so each run consumes Mock SPACE balance and gas. Maintainers fire it
+# from the GitHub UI before promoting an SDK release tag.
+on:
+  workflow_dispatch:
+    inputs:
+      pytest_args:
+        description: >-
+          Extra args forwarded to pytest (e.g. ``-k test_balance_reads`` to
+          run a single test, or ``-x`` to fail fast).
+        required: false
+        default: "-v"
+
+jobs:
+  e2e:
+    name: Python SDK — E2E (testnet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create venv and install SDK + test deps
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3.12 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e sdk/python -e cli
+          .venv/bin/pip install pytest pytest-asyncio httpx web3 eth-account
+
+      - name: Run E2E suite against testnet
+        working-directory: ${{ github.workspace }}
+        env:
+          # Maintainer must set this secret in GitHub repo settings:
+          # Settings → Secrets and variables → Actions → ``SR_TESTNET_PRIVATE_KEY``
+          # Wallet must be funded with native CTC + at least 1 Mock SPACE.
+          SR_TESTNET_PRIVATE_KEY: ${{ secrets.SR_TESTNET_PRIVATE_KEY }}
+          # Defaults are baked into the test module; uncomment to override
+          # without editing the workflow file.
+          # SR_TESTNET_GATEWAY: https://spacerouter-proxy-gateway-test.fly.dev
+          # SR_TESTNET_GATEWAY_MGMT: https://spacerouter-proxy-gateway-test.fly.dev
+          # SR_ESCROW_CONTRACT_ADDRESS: 0xC5740e4e9175301a24FB6d22bA184b8ec0762852
+          # SR_ESCROW_CHAIN_RPC: https://rpc.cc3-testnet.creditcoin.network
+          # SR_ESCROW_TOKEN_ADDRESS: 0x7395953AfBD4F33F05dBadCf32e045B3dd1a62FA
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          .venv/bin/pytest sdk/python/tests/test_e2e_testnet.py \
+            ${{ github.event.inputs.pytest_args }} \
+            2>&1 | tee logs/e2e-testnet.log
+
+      - name: Upload pytest log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-testnet-log
+          path: logs/e2e-testnet.log
+          retention-days: 14
