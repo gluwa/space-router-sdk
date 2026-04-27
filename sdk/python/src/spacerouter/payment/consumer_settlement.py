@@ -31,6 +31,7 @@ import tenacity
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
+from spacerouter.exceptions import SettlementRejected
 from spacerouter.payment.eip712 import EIP712Domain, Receipt, sign_receipt
 
 logger = logging.getLogger(__name__)
@@ -143,7 +144,10 @@ class ConsumerSettlementClient:
             raise  # unreachable
 
     async def submit_signatures(
-        self, signatures: list[dict[str, str]],
+        self,
+        signatures: list[dict[str, str]],
+        *,
+        strict: bool = False,
     ) -> dict[str, Any]:
         """POST ``{request_uuid, signature}`` pairs back to the gateway.
 
@@ -152,6 +156,16 @@ class ConsumerSettlementClient:
         Retries on transport errors and HTTP 5xx with exponential backoff
         (3 attempts, 200ms / 1s / 5s) per spec §9. The verbatim response
         body is surfaced in the raised error message on final failure.
+
+        Parameters
+        ----------
+        signatures : list[dict]
+            ``[{"request_uuid": ..., "signature": ...}, ...]``
+        strict : bool
+            When ``True`` and the gateway returns a non-empty ``rejected``
+            list, raise :class:`SettlementRejected` with the full reasons
+            list. Default ``False`` (swallow — caller inspects the result
+            dict). See spec §9.
         """
         if not signatures:
             return {"accepted": [], "rejected": []}
@@ -177,12 +191,18 @@ class ConsumerSettlementClient:
             return r.json()
 
         try:
-            return await _do()
+            result = await _do()
         except _RetryableHTTPError as exc:
             exc.response.raise_for_status()
             raise  # unreachable
 
-    async def sync_receipts(self, limit: int = 50) -> dict[str, Any]:
+        if strict and result.get("rejected"):
+            raise SettlementRejected(result["rejected"])
+        return result
+
+    async def sync_receipts(
+        self, limit: int = 50, *, strict: bool = False,
+    ) -> dict[str, Any]:
         """One-shot: fetch pending, sign each, submit, return the outcome.
 
         Safe to call anytime — after each proxy request for real-time
@@ -224,7 +244,9 @@ class ConsumerSettlementClient:
                 "signature": sig,
             })
 
-        result = await self.submit_signatures(signatures)
+        # NOTE: pass strict through so SettlementRejected raises before we
+        # finalise pending_count. Caller can still inspect exc.reasons.
+        result = await self.submit_signatures(signatures, strict=strict)
         result["pending_count"] = len(receipts)
         logger.info(
             "Leg 1 sync: %d pending → %d accepted, %d rejected",

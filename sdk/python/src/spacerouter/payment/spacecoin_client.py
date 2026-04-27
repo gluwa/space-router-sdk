@@ -67,6 +67,7 @@ class SpaceRouterSPACE:
         max_rate_per_gb: Optional[int] = None,
         byte_tolerance: float = 0.05,
         byte_tolerance_abs_min: int = 1024,
+        strict_settlement: bool = False,
     ) -> None:
         self.gateway_url = gateway_url.rstrip("/")
         self.proxy_url = proxy_url.rstrip("/")
@@ -88,6 +89,10 @@ class SpaceRouterSPACE:
         # avoids false rejections while still catching gross overcharging.
         self.byte_tolerance = byte_tolerance
         self.byte_tolerance_abs_min = byte_tolerance_abs_min
+        # Whether to surface SettlementRejected when /leg1/sign reports
+        # rejected receipts. Read by SpaceRouter(auto_settle=True) so the
+        # caller's strict choice flows through the auto-pay path. Spec §9.
+        self.strict_settlement = strict_settlement
 
     @property
     def address(self) -> str:
@@ -115,7 +120,9 @@ class SpaceRouterSPACE:
         """Sign a receipt received from the gateway after a proxy request."""
         return self.wallet.sign_receipt(receipt, self.domain)
 
-    async def sync_receipts(self, limit: int = 50) -> dict:
+    async def sync_receipts(
+        self, limit: int = 50, *, strict: Optional[bool] = None,
+    ) -> dict:
         """Settle any pending Leg 1 receipts owed by this consumer.
 
         Fetches unsigned receipts from the gateway's
@@ -125,6 +132,13 @@ class SpaceRouterSPACE:
         Call this after each paid proxy request for immediate settlement,
         or periodically for batch settlement. Safe and idempotent — the
         gateway's consume step is atomic and duplicate calls are no-ops.
+
+        Parameters
+        ----------
+        strict : bool, optional
+            Override ``strict_settlement`` for this call. When effectively
+            ``True`` and any receipt is rejected, raises
+            :class:`SettlementRejected`.
         """
         from spacerouter.payment.consumer_settlement import (
             ConsumerSettlementClient,
@@ -135,7 +149,10 @@ class SpaceRouterSPACE:
             gateway_url=self.gateway_url,
             private_key=self._private_key,
         )
-        return await settler.sync_receipts(limit=limit)
+        effective_strict = (
+            self.strict_settlement if strict is None else strict
+        )
+        return await settler.sync_receipts(limit=limit, strict=effective_strict)
 
     def validate_receipt(
         self,
