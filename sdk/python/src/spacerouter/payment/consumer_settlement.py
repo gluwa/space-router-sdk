@@ -27,12 +27,43 @@ import time
 from typing import Any
 
 import httpx
+import tenacity
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
 from spacerouter.payment.eip712 import EIP712Domain, Receipt, sign_receipt
 
 logger = logging.getLogger(__name__)
+
+
+class _RetryableHTTPError(Exception):
+    """Wraps a 5xx response so tenacity can retry on it.
+
+    Tenacity's ``retry_if_exception_type`` operates on raised exceptions,
+    not on returned values. We raise this internally between attempts and
+    convert back to ``httpx.HTTPStatusError`` after the final failure so
+    callers see the standard exception type with the verbatim body.
+    """
+
+    def __init__(self, response: httpx.Response) -> None:
+        self.response = response
+        body = response.text
+        super().__init__(
+            f"HTTP {response.status_code} from "
+            f"{response.request.method} {response.request.url}: {body}"
+        )
+
+
+# Per spec §9: bounded retry, default 3 attempts, 200ms / 1s / 5s.
+# We use exponential backoff seeded so the first wait is 200ms, then 1s, 5s.
+_RETRY_KW = dict(
+    stop=tenacity.stop_after_attempt(3),
+    wait=tenacity.wait_exponential(multiplier=0.2, min=0.2, max=5.0),
+    retry=tenacity.retry_if_exception_type(
+        (httpx.TransportError, _RetryableHTTPError),
+    ),
+    reraise=True,
+)
 
 
 class ConsumerSettlementClient:
@@ -79,22 +110,37 @@ class ConsumerSettlementClient:
 
         Returns a dict with ``receipts`` (list) and ``domain`` (EIP-712
         domain to sign under).
+
+        Retries on transport errors and HTTP 5xx with exponential backoff
+        (3 attempts, 200ms / 1s / 5s) per spec §9. The verbatim response
+        body is surfaced in the raised error message on final failure.
         """
-        ts = int(time.time())
-        params = {
-            "address": self._account.address,
-            "ts": ts,
-            "sig": self._auth_sig("list-pending", ts),
-            "limit": limit,
-        }
-        async with httpx.AsyncClient(
-            timeout=self._timeout, verify=self._verify,
-        ) as client:
-            r = await client.get(
-                f"{self._gateway_url}/leg1/pending", params=params,
-            )
-        r.raise_for_status()
-        return r.json()
+        @tenacity.retry(**_RETRY_KW)
+        async def _do() -> dict[str, Any]:
+            ts = int(time.time())
+            params = {
+                "address": self._account.address,
+                "ts": ts,
+                "sig": self._auth_sig("list-pending", ts),
+                "limit": limit,
+            }
+            async with httpx.AsyncClient(
+                timeout=self._timeout, verify=self._verify,
+            ) as client:
+                r = await client.get(
+                    f"{self._gateway_url}/leg1/pending", params=params,
+                )
+            if 500 <= r.status_code < 600:
+                raise _RetryableHTTPError(r)
+            r.raise_for_status()
+            return r.json()
+
+        try:
+            return await _do()
+        except _RetryableHTTPError as exc:
+            # Surface body verbatim via the standard httpx exception.
+            exc.response.raise_for_status()
+            raise  # unreachable
 
     async def submit_signatures(
         self, signatures: list[dict[str, str]],
@@ -102,23 +148,39 @@ class ConsumerSettlementClient:
         """POST ``{request_uuid, signature}`` pairs back to the gateway.
 
         Returns ``{accepted: [uuid, ...], rejected: [{request_uuid, reason}]}``.
+
+        Retries on transport errors and HTTP 5xx with exponential backoff
+        (3 attempts, 200ms / 1s / 5s) per spec §9. The verbatim response
+        body is surfaced in the raised error message on final failure.
         """
         if not signatures:
             return {"accepted": [], "rejected": []}
 
-        ts = int(time.time())
-        body = {
-            "address": self._account.address,
-            "ts": ts,
-            "sig": self._auth_sig("sign", ts),
-            "signatures": signatures,
-        }
-        async with httpx.AsyncClient(
-            timeout=self._timeout, verify=self._verify,
-        ) as client:
-            r = await client.post(f"{self._gateway_url}/leg1/sign", json=body)
-        r.raise_for_status()
-        return r.json()
+        @tenacity.retry(**_RETRY_KW)
+        async def _do() -> dict[str, Any]:
+            ts = int(time.time())
+            body = {
+                "address": self._account.address,
+                "ts": ts,
+                "sig": self._auth_sig("sign", ts),
+                "signatures": signatures,
+            }
+            async with httpx.AsyncClient(
+                timeout=self._timeout, verify=self._verify,
+            ) as client:
+                r = await client.post(
+                    f"{self._gateway_url}/leg1/sign", json=body,
+                )
+            if 500 <= r.status_code < 600:
+                raise _RetryableHTTPError(r)
+            r.raise_for_status()
+            return r.json()
+
+        try:
+            return await _do()
+        except _RetryableHTTPError as exc:
+            exc.response.raise_for_status()
+            raise  # unreachable
 
     async def sync_receipts(self, limit: int = 50) -> dict[str, Any]:
         """One-shot: fetch pending, sign each, submit, return the outcome.
