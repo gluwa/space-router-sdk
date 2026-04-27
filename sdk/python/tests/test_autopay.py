@@ -65,22 +65,48 @@ class _FakePayment:
 
 
 class TestSpaceRouterAutoPay:
-    @respx.mock
-    def test_payment_headers_injected(self):
-        """When payment is set, CONNECT carries v1.5 auth headers."""
-        route = respx.get("http://example.com/").mock(
-            return_value=httpx.Response(200, text="ok"),
-        )
+    def test_payment_headers_injected_on_proxy_connect(self, monkeypatch):
+        """When payment is set, the v1.5 auth headers are stamped on the
+        proxy CONNECT (not on the inner TLS-tunnelled request — the
+        gateway can't read inner headers under TLS).
+
+        Verified by subclassing ``httpx.Proxy`` to record every
+        construction's headers, then swapping the class reference inside
+        ``client.py``'s namespace. Going one layer lower (real CONNECT
+        bytes on the wire) requires a real proxy server — covered by
+        the live E2E suite, not this unit-test layer.
+        """
+        from spacerouter import client as client_mod
+
+        captured: list[dict[str, str]] = []
+
+        class _SpyProxy(httpx.Proxy):
+            def __init__(self, url, *args, **kwargs):
+                headers = kwargs.get("headers") or {}
+                captured.append(
+                    {k: v for k, v in (
+                        headers.items() if hasattr(headers, "items") else dict(headers).items()
+                    )}
+                )
+                super().__init__(url, *args, **kwargs)
+
+        # Patch in the module under test so isinstance() against the
+        # subclass still satisfies isinstance(_, httpx.Proxy).
+        monkeypatch.setattr(client_mod.httpx, "Proxy", _SpyProxy)
+
         payment = _FakePayment()
         with SpaceRouter("sr_live_test", payment=payment) as client:
-            resp = client.get("http://example.com/")
-            assert resp.status_code == 200
+            try:
+                client.get("http://example.com/")
+            except Exception:
+                pass  # no real proxy — CONNECT will fail; we only need the construction
 
-        assert route.called
-        sent_headers = route.calls.last.request.headers
-        assert sent_headers["X-SpaceRouter-Payment-Address"] == "0xabc"
-        assert sent_headers["X-SpaceRouter-Challenge"] == "challenge-1"
-        assert sent_headers["X-SpaceRouter-Challenge-Signature"] == "0xsig"
+        assert any(
+            h.get("X-SpaceRouter-Payment-Address") == "0xabc"
+            and h.get("X-SpaceRouter-Challenge") == "challenge-1"
+            and h.get("X-SpaceRouter-Challenge-Signature") == "0xsig"
+            for h in captured
+        ), f"Payment headers not stamped on any proxy CONNECT. Captured: {captured}"
 
     @respx.mock
     def test_fresh_challenge_per_call(self):
@@ -132,8 +158,14 @@ class TestSpaceRouterAutoPay:
             assert h not in sent, f"unexpected v1.5 header on api-key path: {h}"
 
     @respx.mock
-    def test_user_headers_preserved_payment_takes_precedence(self):
-        """User headers go through; payment headers win on collision."""
+    def test_user_headers_preserved_through_inner_request(self):
+        """User-supplied headers go through to the inner request.
+
+        Payment auth headers go on CONNECT (see
+        test_payment_headers_injected_on_proxy_connect) so they don't
+        appear on the inner request anymore. User headers like
+        X-Custom still ride through normally.
+        """
         route = respx.get("http://example.com/").mock(
             return_value=httpx.Response(200, text="ok"),
         )
@@ -141,17 +173,11 @@ class TestSpaceRouterAutoPay:
         with SpaceRouter("sr_live_test", payment=payment) as client:
             client.get(
                 "http://example.com/",
-                headers={
-                    "X-Custom": "kept",
-                    # Lowercase to test case-insensitive collision logic.
-                    "x-spacerouter-challenge": "stale-from-caller",
-                },
+                headers={"X-Custom": "kept"},
             )
 
         sent = route.calls.last.request.headers
         assert sent["X-Custom"] == "kept"
-        # Payment-fetched challenge wins, not the stale one.
-        assert sent["X-SpaceRouter-Challenge"] == "challenge-1"
 
     @respx.mock
     def test_auto_settle_swallows_failure_by_default(self, caplog):
