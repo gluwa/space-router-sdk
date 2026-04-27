@@ -6,8 +6,11 @@ for routing HTTP requests through the Space Router residential proxy network.
 
 from __future__ import annotations
 
+import asyncio
 import base64
-from typing import Any, Literal
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -17,9 +20,70 @@ from spacerouter.exceptions import (
     NoNodesAvailableError,
     QuotaExceededError,
     RateLimitError,
+    SettlementRejected,
     UpstreamError,
 )
 from spacerouter.models import ProxyResponse
+
+if TYPE_CHECKING:
+    from spacerouter.payment.spacecoin_client import SpaceRouterSPACE
+
+logger = logging.getLogger(__name__)
+
+# Headers v1.5 payment injects on every CONNECT. User-supplied request
+# headers MUST NOT override these (see spec §4 single-use challenges).
+_PAYMENT_HEADER_KEYS = (
+    "X-SpaceRouter-Payment-Address",
+    "X-SpaceRouter-Identity-Address",
+    "X-SpaceRouter-Challenge",
+    "X-SpaceRouter-Challenge-Signature",
+)
+
+
+# Single shared executor for sync-world bridges to async payment calls.
+# Lazy-init: tests that never touch payment never spin a thread.
+_SYNC_BRIDGE_EXECUTOR: ThreadPoolExecutor | None = None
+
+
+def _run_async(coro):
+    """Run an async coroutine to completion from sync code.
+
+    The naive ``asyncio.run(coro)`` errors if a loop is already running on
+    the calling thread. We hand off to a worker thread that owns its own
+    fresh loop — safe whether or not the caller is inside one.
+    """
+    global _SYNC_BRIDGE_EXECUTOR
+    if _SYNC_BRIDGE_EXECUTOR is None:
+        _SYNC_BRIDGE_EXECUTOR = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="spacerouter-payment",
+        )
+
+    def _runner():
+        return asyncio.run(coro)
+
+    return _SYNC_BRIDGE_EXECUTOR.submit(_runner).result()
+
+
+def _merge_payment_headers(
+    user_headers: Any, payment_headers: dict[str, str],
+) -> dict[str, str]:
+    """Merge payment headers into user-supplied headers.
+
+    Payment headers take precedence on collision (case-insensitive) — a
+    stale Challenge value from the caller must never shadow a fresh one.
+    Returns a brand new dict; never mutates inputs.
+    """
+    out: dict[str, str] = {}
+    if user_headers:
+        # httpx accepts dict / list[tuple] / Headers; normalise via dict().
+        try:
+            out = dict(user_headers)
+        except (TypeError, ValueError):
+            out = {k: v for k, v in user_headers}  # type: ignore[union-attr]
+    payment_lower = {k.lower() for k in payment_headers}
+    out = {k: v for k, v in out.items() if k.lower() not in payment_lower}
+    out.update(payment_headers)
+    return out
 
 _DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org"
 
@@ -151,6 +215,8 @@ class SpaceRouter:
         region: str | None = None,
         ip_type: str | None = None,
         timeout: float = 30.0,
+        payment: SpaceRouterSPACE | None = None,
+        auto_settle: bool = False,
         **httpx_kwargs: Any,
     ) -> None:
         self._api_key = api_key
@@ -159,6 +225,8 @@ class SpaceRouter:
         self._region = region
         self._ip_type = ip_type
         self._timeout = timeout
+        self._payment = payment
+        self._auto_settle = auto_settle
 
         verify = httpx_kwargs.pop("verify", True)
         proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
@@ -169,10 +237,40 @@ class SpaceRouter:
     # -- HTTP methods -------------------------------------------------------
 
     def request(self, method: str, url: str, **kwargs: Any) -> ProxyResponse:
-        """Send a request through the SpaceRouter proxy."""
+        """Send a request through the SpaceRouter proxy.
+
+        When the client was constructed with ``payment=...`` the v1.5
+        payment auth headers are fetched fresh per call and merged into
+        ``headers`` (user values lose on collision). When ``auto_settle``
+        is also ``True``, ``payment.sync_receipts()`` is run after a
+        successful response. Settlement failures are logged at WARN by
+        default; if the payment client was built with
+        ``strict_settlement=True``, :class:`SettlementRejected` propagates.
+        """
+        if self._payment is not None:
+            challenge = _run_async(self._payment.request_challenge())
+            payment_headers = self._payment.build_auth_headers(challenge)
+            kwargs["headers"] = _merge_payment_headers(
+                kwargs.get("headers"), payment_headers,
+            )
+
         response = self._client.request(method, url, **kwargs)
         _check_proxy_errors(response)
-        return ProxyResponse(response)
+        proxy_resp = ProxyResponse(response)
+
+        if self._payment is not None and self._auto_settle:
+            try:
+                _run_async(self._payment.sync_receipts())
+            except SettlementRejected:
+                # Strict mode: bubble up so caller halts.
+                raise
+            except Exception:
+                logger.warning(
+                    "auto_settle: sync_receipts failed; receipts remain "
+                    "queued (will retry on next call or manual sync)",
+                    exc_info=True,
+                )
+        return proxy_resp
 
     def get(self, url: str, **kwargs: Any) -> ProxyResponse:
         return self.request("GET", url, **kwargs)
@@ -208,6 +306,8 @@ class SpaceRouter:
             region=region,
             ip_type=ip_type,
             timeout=self._timeout,
+            payment=self._payment,
+            auto_settle=self._auto_settle,
         )
 
     # -- Lifecycle ----------------------------------------------------------
@@ -252,6 +352,8 @@ class AsyncSpaceRouter:
         region: str | None = None,
         ip_type: str | None = None,
         timeout: float = 30.0,
+        payment: SpaceRouterSPACE | None = None,
+        auto_settle: bool = False,
         **httpx_kwargs: Any,
     ) -> None:
         self._api_key = api_key
@@ -260,6 +362,8 @@ class AsyncSpaceRouter:
         self._region = region
         self._ip_type = ip_type
         self._timeout = timeout
+        self._payment = payment
+        self._auto_settle = auto_settle
 
         verify = httpx_kwargs.pop("verify", True)
         proxy = _build_proxy(api_key, gateway_url, protocol, region, ip_type)
@@ -270,10 +374,39 @@ class AsyncSpaceRouter:
     # -- HTTP methods -------------------------------------------------------
 
     async def request(self, method: str, url: str, **kwargs: Any) -> ProxyResponse:
-        """Send a request through the SpaceRouter proxy."""
+        """Send a request through the SpaceRouter proxy.
+
+        When the client was constructed with ``payment=...`` the v1.5
+        payment auth headers are fetched fresh per call and merged into
+        ``headers`` (user values lose on collision). When ``auto_settle``
+        is also ``True``, ``payment.sync_receipts()`` is awaited after a
+        successful response. Settlement failures are logged at WARN by
+        default; if the payment client was built with
+        ``strict_settlement=True``, :class:`SettlementRejected` propagates.
+        """
+        if self._payment is not None:
+            challenge = await self._payment.request_challenge()
+            payment_headers = self._payment.build_auth_headers(challenge)
+            kwargs["headers"] = _merge_payment_headers(
+                kwargs.get("headers"), payment_headers,
+            )
+
         response = await self._client.request(method, url, **kwargs)
         _check_proxy_errors(response)
-        return ProxyResponse(response)
+        proxy_resp = ProxyResponse(response)
+
+        if self._payment is not None and self._auto_settle:
+            try:
+                await self._payment.sync_receipts()
+            except SettlementRejected:
+                raise
+            except Exception:
+                logger.warning(
+                    "auto_settle: sync_receipts failed; receipts remain "
+                    "queued (will retry on next call or manual sync)",
+                    exc_info=True,
+                )
+        return proxy_resp
 
     async def get(self, url: str, **kwargs: Any) -> ProxyResponse:
         return await self.request("GET", url, **kwargs)
@@ -309,6 +442,8 @@ class AsyncSpaceRouter:
             region=region,
             ip_type=ip_type,
             timeout=self._timeout,
+            payment=self._payment,
+            auto_settle=self._auto_settle,
         )
 
     # -- Lifecycle ----------------------------------------------------------
