@@ -28,5 +28,16 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/spacerouter"]
 
+# Sdist whitelist — only ship the source package + licence + readme.
+# Without this, hatchling's default sdist rules ship everything in the
+# source dir (tests/, docs/, fixtures, scripts). Keep in lock-step
+# with the wheel target above.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/spacerouter",
+    "README.md",
+    "LICENSE",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
