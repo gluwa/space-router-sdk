@@ -12,6 +12,7 @@ export {
   RateLimitError,
   NoNodesAvailableError,
   UpstreamError,
+  SettlementRejectedError,
 } from "./errors.js";
 
 export {
