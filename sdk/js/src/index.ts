@@ -15,6 +15,17 @@ export {
   SettlementRejectedError,
 } from "./errors.js";
 
+export { SpaceRouterSPACE } from "./payment/spacecoin.js";
+export type { SpaceRouterSPACEOptions } from "./payment/spacecoin.js";
+export { ConsumerSettlementClient } from "./payment/consumerSettlement.js";
+export type {
+  ConsumerSettlementOptions,
+  PendingFetchResult,
+  SignatureSubmission,
+  SignatureSubmitResult,
+  SubmitOptions,
+} from "./payment/consumerSettlement.js";
+
 export {
   loadOrCreateIdentity,
   getAddress,
