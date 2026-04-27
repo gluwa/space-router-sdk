@@ -72,22 +72,27 @@ describe("EscrowClient reads", () => {
       if (call.method === "eth_chainId") return "0x18e0f"; // 102031
       if (call.method === "eth_call") {
         const tx = call.params[0] as { to: string; data: string };
-        // balanceOf(address) on escrow OR token — both are 0x70a08231...
+        // ERC-20 balanceOf is 0x70a08231; escrow.getBalance is 0xf8b2cb4f.
         if (tx.data.startsWith("0x70a08231")) {
           return encodeFunctionResult({
-            abi: ESCROW_ABI,
+            abi: ERC20_ABI,
             functionName: "balanceOf",
+            result: 99_999n,
+          });
+        }
+        if (tx.data.startsWith("0xf8b2cb4f")) {
+          return encodeFunctionResult({
+            abi: ESCROW_ABI,
+            functionName: "getBalance",
             result: 12345n,
           });
         }
-        // withdrawalRequestOf(address) — selector 0x… arbitrary, viem encodes
-        // We just match by function name via decoding fallback below.
       }
       return "0x";
     });
   });
 
-  it("balance() reads `balanceOf` on the escrow contract", async () => {
+  it("balance() reads `getBalance` on the escrow contract", async () => {
     const client = new EscrowClient({
       rpcUrl: RPC_URL,
       contractAddress: ESCROW_ADDR,
@@ -100,7 +105,7 @@ describe("EscrowClient reads", () => {
     expect(calls.length).toBeGreaterThanOrEqual(1);
     const tx = calls[0]!.params[0] as { to: string; data: string };
     expect(tx.to.toLowerCase()).toBe(ESCROW_ADDR.toLowerCase());
-    expect(tx.data.startsWith("0x70a08231")).toBe(true); // balanceOf(address)
+    expect(tx.data.startsWith("0xf8b2cb4f")).toBe(true); // getBalance(address)
   });
 
   it("tokenBalance() reads `balanceOf` on the token contract", async () => {
@@ -118,14 +123,14 @@ describe("EscrowClient reads", () => {
 });
 
 describe("EscrowClient.withdrawalRequest", () => {
-  it("decodes (amount, readyAt) tuple", async () => {
+  it("decodes (amount, readyAt) tuple from getWithdrawalRequest", async () => {
     mock = installRpcMock((call) => {
       if (call.method === "eth_chainId") return "0x18e0f";
       if (call.method === "eth_call") {
         return encodeFunctionResult({
           abi: ESCROW_ABI,
-          functionName: "withdrawalRequestOf",
-          result: [500n, 1_700_000_000n],
+          functionName: "getWithdrawalRequest",
+          result: [500n, 1_700_000_000n, true],
         });
       }
       return "0x";
@@ -142,13 +147,13 @@ describe("EscrowClient.withdrawalRequest", () => {
 });
 
 describe("EscrowClient.isNonceUsed", () => {
-  it("hashes a UUID string before passing to usedNonces", async () => {
+  it("passes UUID string directly to isNonceUsed (contract hashes internally)", async () => {
     mock = installRpcMock((call) => {
       if (call.method === "eth_chainId") return "0x18e0f";
       if (call.method === "eth_call") {
         return encodeFunctionResult({
           abi: ESCROW_ABI,
-          functionName: "usedNonces",
+          functionName: "isNonceUsed",
           result: true,
         });
       }
@@ -160,50 +165,27 @@ describe("EscrowClient.isNonceUsed", () => {
       tokenAddress: TOKEN_ADDR,
     });
     const uuid = "00000000-0000-0000-0000-000000000001";
-    const expectedHash = keccak256(toBytes(uuid));
     const used = await client.isNonceUsed(ACCOUNT_ADDR, uuid);
     expect(used).toBe(true);
 
+    // Calldata embeds the UTF-8-encoded UUID string in the dynamic-args
+    // section. Loose check: the lowercase hex of "00000000-0000-..." appears
+    // as ASCII bytes in the calldata.
     const tx = mock!.calls.find((c) => c.method === "eth_call")!
       .params[0] as { to: string; data: string };
-    // Last 32 bytes of calldata is the bytes32 hash arg
-    expect(tx.data.toLowerCase().endsWith(expectedHash.slice(2))).toBe(true);
-  });
-
-  it("accepts a pre-hashed 32-byte hex without re-hashing", async () => {
-    mock = installRpcMock((call) => {
-      if (call.method === "eth_chainId") return "0x18e0f";
-      if (call.method === "eth_call") {
-        return encodeFunctionResult({
-          abi: ESCROW_ABI,
-          functionName: "usedNonces",
-          result: false,
-        });
-      }
-      return "0x";
-    });
-    const client = new EscrowClient({
-      rpcUrl: RPC_URL,
-      contractAddress: ESCROW_ADDR,
-      tokenAddress: TOKEN_ADDR,
-    });
-    const preHashed =
-      "0xabababababababababababababababababababababababababababababababab" as const;
-    await client.isNonceUsed(ACCOUNT_ADDR, preHashed);
-    const tx = mock!.calls.find((c) => c.method === "eth_call")!
-      .params[0] as { to: string; data: string };
-    expect(tx.data.toLowerCase().endsWith(preHashed.slice(2))).toBe(true);
+    const utf8Hex = Buffer.from(uuid, "utf8").toString("hex");
+    expect(tx.data.toLowerCase()).toContain(utf8Hex);
   });
 });
 
 describe("EscrowClient.withdrawalDelay", () => {
-  it("returns the on-chain delay value", async () => {
+  it("returns the on-chain WITHDRAWAL_DELAY constant", async () => {
     mock = installRpcMock((call) => {
       if (call.method === "eth_chainId") return "0x18e0f";
       if (call.method === "eth_call") {
         return encodeFunctionResult({
           abi: ESCROW_ABI,
-          functionName: "withdrawalDelay",
+          functionName: "WITHDRAWAL_DELAY",
           result: 432_000n,
         });
       }

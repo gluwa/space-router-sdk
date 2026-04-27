@@ -8,36 +8,41 @@
 
 export const ESCROW_ABI = [
   // ── Reads ─────────────────────────────────────────────────────────────
+  // Method names mirror the deployed TokenPaymentEscrow.sol exactly.
+  // (The protocol doc §6 used aliases — the Python SDK's escrow_abi.json
+  // is the authoritative reference.)
   {
     type: "function",
-    name: "balanceOf",
+    name: "getBalance",
     stateMutability: "view",
     inputs: [{ name: "client", type: "address" }],
     outputs: [{ name: "", type: "uint256" }],
   },
   {
     type: "function",
-    name: "withdrawalRequestOf",
+    name: "getWithdrawalRequest",
     stateMutability: "view",
     inputs: [{ name: "client", type: "address" }],
     outputs: [
       { name: "amount", type: "uint256" },
-      { name: "readyAt", type: "uint256" },
+      { name: "unlockAt", type: "uint256" },
+      { name: "exists", type: "bool" },
     ],
   },
   {
+    // Real contract takes the UUID string directly (hashes internally).
     type: "function",
-    name: "usedNonces",
+    name: "isNonceUsed",
     stateMutability: "view",
     inputs: [
       { name: "client", type: "address" },
-      { name: "uuidHash", type: "bytes32" },
+      { name: "requestUUID", type: "string" },
     ],
     outputs: [{ name: "", type: "bool" }],
   },
   {
     type: "function",
-    name: "withdrawalDelay",
+    name: "WITHDRAWAL_DELAY",
     stateMutability: "view",
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],

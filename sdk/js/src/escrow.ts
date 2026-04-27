@@ -14,8 +14,6 @@ import {
   createWalletClient,
   getAddress,
   http,
-  keccak256,
-  toBytes,
   type Account,
   type Hash,
   type PublicClient,
@@ -91,7 +89,7 @@ export class EscrowClient {
     return this._publicClient.readContract({
       address: this.contractAddress,
       abi: ESCROW_ABI,
-      functionName: "balanceOf",
+      functionName: "getBalance",
       args: [getAddress(address)],
     });
   }
@@ -106,39 +104,45 @@ export class EscrowClient {
     });
   }
 
-  /** Pending withdrawal request for `address` (`amount`, `readyAt`). */
+  /**
+   * Pending withdrawal request for `address`.
+   *
+   * Returns `{amount, readyAt}` for backward compatibility with earlier
+   * stub implementations. The on-chain function is `getWithdrawalRequest`
+   * and returns `(amount, unlockAt, exists)`; we surface `unlockAt` as
+   * `readyAt` and drop `exists` (callers can derive it from
+   * `amount > 0n`).
+   */
   async withdrawalRequest(
     address: `0x${string}`,
   ): Promise<WithdrawalRequest> {
-    const result = await this._publicClient.readContract({
+    const [amount, unlockAt /* exists */] = await this._publicClient.readContract({
       address: this.contractAddress,
       abi: ESCROW_ABI,
-      functionName: "withdrawalRequestOf",
+      functionName: "getWithdrawalRequest",
       args: [getAddress(address)],
     });
-    const [amount, readyAt] = result;
-    return { amount, readyAt };
+    return { amount, readyAt: unlockAt };
   }
 
   /**
-   * Whether `uuidHash` has already been consumed for `client`.
+   * Whether the request UUID has already been consumed for `client`.
    *
-   * `uuidHash` MUST be the keccak-256 of the request UUID string. Pass a raw
-   * 32-byte hex if you have already hashed it; pass a UTF-8 string and we'll
-   * hash it for you.
+   * The deployed contract takes the UUID **string** directly (and hashes
+   * internally). Earlier versions of this SDK accepted a 32-byte hash;
+   * for backward compat we accept either: a 66-char `0x...` hash is
+   * rejected since the on-chain method no longer takes hashes; pass
+   * the UUID string instead.
    */
   async isNonceUsed(
     client: `0x${string}`,
-    uuidHash: `0x${string}` | string,
+    requestUUID: string,
   ): Promise<boolean> {
-    const hash = (uuidHash.startsWith("0x") && uuidHash.length === 66
-      ? uuidHash
-      : keccak256(toBytes(uuidHash))) as `0x${string}`;
     return this._publicClient.readContract({
       address: this.contractAddress,
       abi: ESCROW_ABI,
-      functionName: "usedNonces",
-      args: [getAddress(client), hash],
+      functionName: "isNonceUsed",
+      args: [getAddress(client), requestUUID],
     });
   }
 
@@ -147,7 +151,7 @@ export class EscrowClient {
     return this._publicClient.readContract({
       address: this.contractAddress,
       abi: ESCROW_ABI,
-      functionName: "withdrawalDelay",
+      functionName: "WITHDRAWAL_DELAY",
     });
   }
 
