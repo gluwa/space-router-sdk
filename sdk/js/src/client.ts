@@ -201,12 +201,26 @@ export class SpaceRouter {
     }
 
     // v1.5 payment header injection — fetch fresh challenge per request.
+    // Payment headers MUST land on the proxy CONNECT (not on the inner
+    // TLS-tunnelled request) so the gateway can read them. We achieve
+    // this by building a per-request ProxyAgent with the payment
+    // headers stamped onto its connect-time headers map. The shared
+    // long-lived `_agent` is only used for non-paid requests.
+    let dispatcher = this._agent;
     if (options?.payment) {
       const challenge = await options.payment.requestChallenge();
       const paymentHeaders = await options.payment.buildAuthHeaders(challenge);
-      // Payment headers always win over caller-supplied entries with the same
-      // name (v1.5 protocol §4 — these are auth, not user metadata).
-      Object.assign(headers, paymentHeaders);
+      const parsed = new URL(this._gatewayUrl);
+      const scheme = parsed.protocol.replace(":", "") || "https";
+      const port = parsed.port || (scheme === "https" ? "443" : "8080");
+      const proxyUrl = `${scheme}://${parsed.hostname}:${port}`;
+      dispatcher = new ProxyAgent({
+        uri: proxyUrl,
+        headers: {
+          "Proxy-Authorization": `Basic ${Buffer.from(`${this._apiKey}:`).toString("base64")}`,
+          ...paymentHeaders,
+        },
+      });
     }
 
     const controller = new AbortController();
@@ -220,11 +234,20 @@ export class SpaceRouter {
         body: options?.body,
         signal,
         // @ts-expect-error -- Node.js fetch dispatcher option
-        dispatcher: this._agent,
+        dispatcher,
       });
 
       await checkProxyErrors(response);
       const proxyResponse = new ProxyResponse(response);
+
+      // NOTE: do NOT close the per-request dispatcher here even though
+      // we built it just for this call. fetch() returns when HEADERS
+      // arrive; the body stream still needs the underlying connection
+      // open while the caller reads .arrayBuffer() / .json() / .text().
+      // Closing here aborted body reads on large responses (E3 1MB
+      // failed every time). The dispatcher is GC-collected after the
+      // response is consumed; leaking it for the request's lifetime
+      // is the correct trade-off vs. truncating bodies.
 
       if (options?.autoSettle && options.payment) {
         try {
