@@ -15,12 +15,8 @@
  * surfaces the full reasons list so callers can decide.
  */
 
-// TODO(track-c): swap stub for real export once Track C lands.
-import {
-  type ClientPaymentWallet,
-  type EIP712Domain,
-  type Receipt,
-} from "./_track-c-stub.js";
+import { type ClientPaymentWallet } from "./clientWallet.js";
+import { type EIP712Domain, type Receipt } from "./eip712.js";
 import { SettlementRejectedError } from "../errors.js";
 import { fetch as undiciFetch } from "undici";
 
@@ -118,7 +114,9 @@ function decodeDomain(raw: WireDomain): EIP712Domain {
   return {
     name: raw.name,
     version: raw.version,
-    chainId: raw.chainId,
+    // Wire format is JSON number; Track C's eip712 domain typedata expects
+    // bigint per viem's signTypedData signature.
+    chainId: BigInt(raw.chainId),
     verifyingContract: raw.verifyingContract,
   };
 }

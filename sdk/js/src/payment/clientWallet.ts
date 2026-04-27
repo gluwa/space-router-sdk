@@ -62,6 +62,19 @@ export class ClientPaymentWallet {
     return this._account.signMessage({ message });
   }
 
+  /**
+   * Raw EIP-191 personal_sign over an arbitrary UTF-8 string.
+   *
+   * Used by the Leg 1 settlement broker for the timestamp-bound auth
+   * messages `space-router:leg1-list-pending:<addr>:<ts>` and
+   * `space-router:leg1-sign:<addr>:<ts>` — protocol §4. The wallet does
+   * NOT add a wrapper prefix; the caller passes the exact bytes the
+   * gateway re-derives.
+   */
+  async signMessage(message: string): Promise<`0x${string}`> {
+    return this._account.signMessage({ message });
+  }
+
   /** EIP-712 receipt signing — uses the bound viem account directly. */
   async signReceipt(
     receipt: Receipt,

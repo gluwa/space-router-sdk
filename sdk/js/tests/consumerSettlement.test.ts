@@ -16,7 +16,7 @@ import { MockAgent, setGlobalDispatcher, getGlobalDispatcher } from "undici";
 import type { Dispatcher } from "undici";
 
 import { ConsumerSettlementClient } from "../src/payment/consumerSettlement.js";
-import { ClientPaymentWallet } from "../src/payment/_track-c-stub.js";
+import { ClientPaymentWallet } from "../src/payment/clientWallet.js";
 import { SettlementRejectedError } from "../src/errors.js";
 
 const PRIVATE_KEY =
@@ -76,7 +76,7 @@ describe("ConsumerSettlementClient.fetchPending", () => {
     const result = await client.fetchPending(25);
 
     expect(result.receipts).toEqual([]);
-    expect(result.domain.chainId).toBe(102031);
+    expect(result.domain.chainId).toBe(102031n);
 
     expect(capturedPath).toBeDefined();
     const url = new URL(`${GATEWAY_HOST}${capturedPath}`);

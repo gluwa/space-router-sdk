@@ -9,20 +9,20 @@
  * payment headers), §3 (`/auth/challenge`), §3 (Leg 1 broker).
  */
 
-// TODO(track-c): swap stub for real export once Track C lands.
 import {
   type ClientPaymentWallet,
+  type AuthHeaders,
+} from "./clientWallet.js";
+import {
   type EIP712Domain,
   type Receipt,
-  type PaymentAuthHeaders,
   signReceipt,
-} from "./_track-c-stub.js";
+} from "./eip712.js";
 import { ConsumerSettlementClient } from "./consumerSettlement.js";
 import { fetch as undiciFetch } from "undici";
 
 export interface SpaceRouterSPACEOptions {
   gatewayMgmtUrl: string;
-  // TODO(track-c): swap stub for real ClientPaymentWallet from Track C.
   wallet: ClientPaymentWallet;
   /** Propagated to ConsumerSettlementClient.submitSignatures. */
   strict?: boolean;
@@ -30,7 +30,6 @@ export interface SpaceRouterSPACEOptions {
 
 export class SpaceRouterSPACE {
   private readonly _gatewayMgmtUrl: string;
-  // TODO(track-c): swap stub for real ClientPaymentWallet from Track C.
   private readonly _wallet: ClientPaymentWallet;
   private readonly _strict: boolean;
   private _settlement?: ConsumerSettlementClient;
@@ -69,7 +68,7 @@ export class SpaceRouterSPACE {
   }
 
   /** Build the four `X-SpaceRouter-*` per-request payment headers. */
-  async buildAuthHeaders(challenge: string): Promise<PaymentAuthHeaders> {
+  async buildAuthHeaders(challenge: string): Promise<AuthHeaders> {
     return this._wallet.buildAuthHeaders(challenge);
   }
 

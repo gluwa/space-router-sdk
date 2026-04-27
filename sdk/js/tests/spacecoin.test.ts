@@ -7,7 +7,7 @@ import { MockAgent, setGlobalDispatcher, getGlobalDispatcher } from "undici";
 import type { Dispatcher } from "undici";
 
 import { SpaceRouterSPACE } from "../src/payment/spacecoin.js";
-import { ClientPaymentWallet } from "../src/payment/_track-c-stub.js";
+import { ClientPaymentWallet } from "../src/payment/clientWallet.js";
 import { SettlementRejectedError } from "../src/errors.js";
 
 const PRIVATE_KEY =

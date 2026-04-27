@@ -13,7 +13,7 @@ import type { Dispatcher } from "undici";
 
 import { SpaceRouter } from "../src/client.js";
 import { SpaceRouterSPACE } from "../src/payment/spacecoin.js";
-import { ClientPaymentWallet } from "../src/payment/_track-c-stub.js";
+import { ClientPaymentWallet } from "../src/payment/clientWallet.js";
 
 const PRIVATE_KEY =
   "0x3658361ca2257090f7b4bc44d7b514f930b038cd368050fc45ae7849f55a7937" as const;
