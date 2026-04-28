@@ -17,6 +17,7 @@ import {
 } from "./errors.js";
 import type { IpType, SpaceRouterOptions } from "./models.js";
 import { ProxyResponse } from "./models.js";
+import type { SpaceRouterSPACE } from "./payment/spacecoin.js";
 
 const DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org";
 const DEFAULT_TIMEOUT = 30_000;
@@ -36,6 +37,19 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   body?: BodyInit;
   signal?: AbortSignal;
+  /**
+   * v1.5 escrow payment façade.  When set, the client fetches a fresh
+   * challenge per request and injects the four `X-SpaceRouter-*` payment
+   * headers into the outgoing request.  Headers always take precedence over
+   * caller-supplied entries with the same name.
+   */
+  payment?: SpaceRouterSPACE;
+  /**
+   * v1.5 auto-settle: after a request, call `payment.syncReceipts()`.
+   * Errors are warn-logged unless `payment.strict` is true.
+   * Has no effect unless `payment` is also set.
+   */
+  autoSettle?: boolean;
 }
 
 /**
@@ -176,6 +190,7 @@ export class SpaceRouter {
     url: string,
     options?: RequestOptions,
   ): Promise<ProxyResponse> {
+    // User headers first; routing + payment headers take precedence on conflict.
     const headers: Record<string, string> = { ...options?.headers };
 
     if (this._region) {
@@ -183,6 +198,29 @@ export class SpaceRouter {
     }
     if (this._ipType) {
       headers["X-SpaceRouter-IP-Type"] = this._ipType;
+    }
+
+    // v1.5 payment header injection — fetch fresh challenge per request.
+    // Payment headers MUST land on the proxy CONNECT (not on the inner
+    // TLS-tunnelled request) so the gateway can read them. We achieve
+    // this by building a per-request ProxyAgent with the payment
+    // headers stamped onto its connect-time headers map. The shared
+    // long-lived `_agent` is only used for non-paid requests.
+    let dispatcher = this._agent;
+    if (options?.payment) {
+      const challenge = await options.payment.requestChallenge();
+      const paymentHeaders = await options.payment.buildAuthHeaders(challenge);
+      const parsed = new URL(this._gatewayUrl);
+      const scheme = parsed.protocol.replace(":", "") || "https";
+      const port = parsed.port || (scheme === "https" ? "443" : "8080");
+      const proxyUrl = `${scheme}://${parsed.hostname}:${port}`;
+      dispatcher = new ProxyAgent({
+        uri: proxyUrl,
+        headers: {
+          "Proxy-Authorization": `Basic ${Buffer.from(`${this._apiKey}:`).toString("base64")}`,
+          ...paymentHeaders,
+        },
+      });
     }
 
     const controller = new AbortController();
@@ -196,11 +234,38 @@ export class SpaceRouter {
         body: options?.body,
         signal,
         // @ts-expect-error -- Node.js fetch dispatcher option
-        dispatcher: this._agent,
+        dispatcher,
       });
 
       await checkProxyErrors(response);
-      return new ProxyResponse(response);
+      const proxyResponse = new ProxyResponse(response);
+
+      // NOTE: do NOT close the per-request dispatcher here even though
+      // we built it just for this call. fetch() returns when HEADERS
+      // arrive; the body stream still needs the underlying connection
+      // open while the caller reads .arrayBuffer() / .json() / .text().
+      // Closing here aborted body reads on large responses (E3 1MB
+      // failed every time). The dispatcher is GC-collected after the
+      // response is consumed; leaking it for the request's lifetime
+      // is the correct trade-off vs. truncating bodies.
+
+      if (options?.autoSettle && options.payment) {
+        try {
+          await options.payment.syncReceipts();
+        } catch (settleErr) {
+          if (options.payment.strict) {
+            throw settleErr;
+          }
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[spacerouter] autoSettle failed (non-strict, swallowed): ${
+              settleErr instanceof Error ? settleErr.message : String(settleErr)
+            }`,
+          );
+        }
+      }
+
+      return proxyResponse;
     } catch (err) {
       if (err instanceof SpaceRouterError) throw err;
 
