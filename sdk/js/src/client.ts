@@ -162,6 +162,19 @@ async function checkProxyErrors(response: Response): Promise<void> {
  * client.close();
  * ```
  */
+/**
+ * Options for the {@link SpaceRouter} constructor — superset of
+ * {@link SpaceRouterOptions} that also accepts the v1.5 payment façade
+ * and an autoSettle flag.  Setting them here makes every request paid
+ * by default; callers can still override per-call via {@link RequestOptions}.
+ */
+export interface SpaceRouterClientOptions extends SpaceRouterOptions {
+  /** v1.5 escrow payment façade. See {@link RequestOptions.payment}. */
+  payment?: SpaceRouterSPACE;
+  /** v1.5 auto-settle. See {@link RequestOptions.autoSettle}. */
+  autoSettle?: boolean;
+}
+
 export class SpaceRouter {
   private readonly _apiKey: string;
   private readonly _gatewayUrl: string;
@@ -170,8 +183,10 @@ export class SpaceRouter {
   private readonly _ipType: IpType | undefined;
   private readonly _timeout: number;
   private readonly _agent: ProxyAgent | SocksProxyAgent;
+  private readonly _payment: SpaceRouterSPACE | undefined;
+  private readonly _autoSettle: boolean;
 
-  constructor(apiKey: string, options?: SpaceRouterOptions) {
+  constructor(apiKey: string, options?: SpaceRouterClientOptions) {
     this._apiKey = apiKey;
     this._gatewayUrl = options?.gatewayUrl ?? DEFAULT_HTTP_GATEWAY;
     this._protocol = options?.protocol ?? "http";
@@ -180,6 +195,8 @@ export class SpaceRouter {
     if (this._region) validateRegion(this._region);
     this._timeout = options?.timeout ?? DEFAULT_TIMEOUT;
     this._agent = buildAgent(apiKey, this._gatewayUrl, this._protocol);
+    this._payment = options?.payment;
+    this._autoSettle = options?.autoSettle ?? false;
   }
 
   // -- HTTP methods ---------------------------------------------------------
@@ -206,10 +223,17 @@ export class SpaceRouter {
     // this by building a per-request ProxyAgent with the payment
     // headers stamped onto its connect-time headers map. The shared
     // long-lived `_agent` is only used for non-paid requests.
+    //
+    // `payment` and `autoSettle` may be supplied either at construction
+    // time (the documented happy path) or per-call via RequestOptions.
+    // Per-call overrides take precedence; otherwise we fall back to the
+    // values stored on the client.
+    const payment = options?.payment ?? this._payment;
+    const autoSettle = options?.autoSettle ?? this._autoSettle;
     let dispatcher = this._agent;
-    if (options?.payment) {
-      const challenge = await options.payment.requestChallenge();
-      const paymentHeaders = await options.payment.buildAuthHeaders(challenge);
+    if (payment) {
+      const challenge = await payment.requestChallenge();
+      const paymentHeaders = await payment.buildAuthHeaders(challenge);
       const parsed = new URL(this._gatewayUrl);
       const scheme = parsed.protocol.replace(":", "") || "https";
       const port = parsed.port || (scheme === "https" ? "443" : "8080");
@@ -249,11 +273,11 @@ export class SpaceRouter {
       // response is consumed; leaking it for the request's lifetime
       // is the correct trade-off vs. truncating bodies.
 
-      if (options?.autoSettle && options.payment) {
+      if (autoSettle && payment) {
         try {
-          await options.payment.syncReceipts();
+          await payment.syncReceipts();
         } catch (settleErr) {
-          if (options.payment.strict) {
+          if (payment.strict) {
             throw settleErr;
           }
           // eslint-disable-next-line no-console

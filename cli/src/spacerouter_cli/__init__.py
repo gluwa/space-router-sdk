@@ -1,3 +1,8 @@
 """SpaceRouter CLI — AI-agent-friendly tool for residential proxy requests."""
 
-__version__ = "0.3.0b1"
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    __version__ = _pkg_version("spacerouter-cli")
+except PackageNotFoundError:  # pragma: no cover — running from source
+    __version__ = "0.0.0+local"

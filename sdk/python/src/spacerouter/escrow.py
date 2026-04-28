@@ -109,20 +109,27 @@ class EscrowClient:
         if not self._account:
             raise RuntimeError("Private key required for write operations")
 
-    def _send_tx(self, tx_func, gas: int = 200_000) -> str:
+    def _send_tx(self, tx_func, gas: int = 500_000) -> str:
+        """Build, estimate, sign, and broadcast a tx.
+
+        ``gas`` is a fallback ceiling used only if eth_estimateGas fails (some
+        RPCs are flaky on contract calls). The estimator runs against the
+        unsigned tx WITHOUT a pre-set gas — pre-setting it confused some
+        Creditcoin RPCs into refusing to estimate above the supplied value
+        (root cause of v1.5.0-rc.1's "deposit reverts at 200k gas" bug).
+        """
         self._require_signer()
         wallet = self._account.address
         tx = tx_func.build_transaction({
             "from": wallet,
             "nonce": self._w3.eth.get_transaction_count(wallet),
             "chainId": self._w3.eth.chain_id,
-            "gas": gas,
         })
         try:
             est = self._w3.eth.estimate_gas(tx)
-            tx["gas"] = int(est * 1.2)
+            tx["gas"] = int(est * 1.3)
         except Exception:
-            pass
+            tx["gas"] = gas
         signed = self._w3.eth.account.sign_transaction(tx, self._account.key)
         tx_hash = self._w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = self._w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
@@ -145,7 +152,10 @@ class EscrowClient:
                         to_checksum_address(self._contract_address), amount
                     ), gas=100_000,
                 )
-        return self._send_tx(self._contract.functions.deposit(amount))
+        # Deposit observed at ~303k gas on Creditcoin testnet. Set the
+        # fallback ceiling above that so we never underestimate when
+        # eth_estimateGas is unavailable.
+        return self._send_tx(self._contract.functions.deposit(amount), gas=500_000)
 
     def initiate_withdrawal(self, amount: int) -> str:
         """Start withdrawal with 5-day timelock."""
