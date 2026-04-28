@@ -1,5 +1,12 @@
 """SpaceRouter Python SDK — route HTTP requests through residential IPs."""
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    __version__ = _pkg_version("spacerouter")
+except PackageNotFoundError:  # pragma: no cover — running from source
+    __version__ = "0.0.0+local"
+
 from spacerouter.admin import AsyncSpaceRouterAdmin, SpaceRouterAdmin
 from spacerouter.client import AsyncSpaceRouter, SpaceRouter
 from spacerouter.escrow import EscrowClient
