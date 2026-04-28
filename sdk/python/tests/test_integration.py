@@ -1,10 +1,17 @@
-"""Integration tests for the SpaceRouter Python SDK.
+"""Integration tests for the SpaceRouter Python SDK (LEGACY — v1.4 API-key flow).
 
-These tests hit the **live** Coordination API and proxy gateway at
-``gateway.spacerouter.org``.  They require the ``SR_API_KEY`` environment
-variable to be set to a billing-provisioned key:
+DEPRECATED 2026-04-27. The v1.4 ``sr_live_*`` API-key flow is dead on the
+test gateway after the v1.5 escrow rollout: the gateway no longer
+provisions or accepts API keys, so the production-style auth these tests
+exercise has no working backend.
 
-    SR_API_KEY=sr_live_xxx pytest tests/test_integration.py -v
+This file is kept on disk for historical reference (see git blame for the
+v1.4 SDK shape) but every test is skipped at module load. The replacement
+is ``test_e2e_testnet.py`` next to this file, which exercises the v1.5
+escrow-signed-receipt flow end-to-end.
+
+Constraint from the v1.5 rollout: do NOT delete this file. Promote a new
+test module instead so ``git log`` reads as a deprecation, not a rewrite.
 """
 
 from __future__ import annotations
@@ -15,18 +22,26 @@ import pytest
 
 from spacerouter import SpaceRouterAdmin, SpaceRouter
 
+# Hard skip the whole module — the API-key flow these tests rely on has
+# been retired on the test gateway. See ``test_e2e_testnet.py``.
+pytestmark = pytest.mark.skip(
+    reason=(
+        "v1.4 API-key flow retired post-v1.5 escrow rollout — see "
+        "test_e2e_testnet.py for the replacement."
+    ),
+)
+
 
 COORDINATION_URL = os.environ.get(
     "SR_COORDINATION_API_URL", "https://coordination.spacerouter.org"
 )
 GATEWAY_URL = os.environ.get(
-    "SR_GATEWAY_URL", "https://gateway.spacerouter.org:8080"
+    "SR_GATEWAY_URL", "https://gateway.spacerouter.org"
 )
 
-# A billing-provisioned API key for proxy tests.
+# A billing-provisioned API key for proxy tests. Retained for historical
+# reference; the gateway rejects ``sr_live_*`` keys post-v1.5.
 API_KEY = os.environ.get("SR_API_KEY")
-
-pytestmark = pytest.mark.skipif(not API_KEY, reason="SR_API_KEY not set")
 
 
 class TestIntegration:

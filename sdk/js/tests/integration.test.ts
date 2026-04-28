@@ -16,7 +16,7 @@ const COORDINATION_URL =
   "https://coordination.spacerouter.org";
 
 const GATEWAY_URL =
-  process.env.SR_GATEWAY_URL ?? "https://gateway.spacerouter.org:8080";
+  process.env.SR_GATEWAY_URL ?? "https://gateway.spacerouter.org";
 
 /** A billing-provisioned API key for proxy tests. */
 const API_KEY = process.env.SR_API_KEY;

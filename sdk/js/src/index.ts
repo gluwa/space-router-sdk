@@ -8,6 +8,7 @@ export { SpaceRouterAdmin } from "./admin.js";
 export {
   SpaceRouterError,
   AuthenticationError,
+  QuotaExceededError,
   RateLimitError,
   NoNodesAvailableError,
   UpstreamError,

@@ -2,10 +2,13 @@
 
 from spacerouter.admin import AsyncSpaceRouterAdmin, SpaceRouterAdmin
 from spacerouter.client import AsyncSpaceRouter, SpaceRouter
+from spacerouter.escrow import EscrowClient
 from spacerouter.exceptions import (
     AuthenticationError,
     NoNodesAvailableError,
+    QuotaExceededError,
     RateLimitError,
+    SettlementRejected,
     SpaceRouterError,
     UpstreamError,
 )
@@ -29,6 +32,13 @@ from spacerouter.models import (
     TransferPage,
     VouchingSignature,
 )
+from spacerouter.payment import (
+    ClientPaymentWallet,
+    ConsumerSettlementClient,
+    EIP712Domain,
+    Receipt,
+    SpaceRouterSPACE,
+)
 
 __all__ = [
     "SpaceRouter",
@@ -51,7 +61,15 @@ __all__ = [
     "AuthenticationError",
     "RateLimitError",
     "NoNodesAvailableError",
+    "QuotaExceededError",
     "UpstreamError",
+    "SettlementRejected",
+    "SpaceRouterSPACE",
+    "EscrowClient",
+    "Receipt",
+    "EIP712Domain",
+    "ConsumerSettlementClient",
+    "ClientPaymentWallet",
     "load_or_create_identity",
     "sign_request",
     "create_vouching_signature",

@@ -60,6 +60,27 @@ export class NoNodesAvailableError extends SpaceRouterError {
   }
 }
 
+/** 402 Payment Required — monthly data transfer limit exceeded. */
+export class QuotaExceededError extends SpaceRouterError {
+  readonly limitBytes: number;
+  readonly usedBytes: number;
+
+  constructor(
+    message: string,
+    options: {
+      limitBytes: number;
+      usedBytes: number;
+      statusCode?: number;
+      requestId?: string;
+    },
+  ) {
+    super(message, options);
+    this.name = "QuotaExceededError";
+    this.limitBytes = options.limitBytes;
+    this.usedBytes = options.usedBytes;
+  }
+}
+
 /** 502 Bad Gateway — target unreachable via residential node. */
 export class UpstreamError extends SpaceRouterError {
   constructor(
