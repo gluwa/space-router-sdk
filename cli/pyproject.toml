@@ -27,5 +27,13 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/spacerouter_cli"]
 
+# Sdist whitelist — match the wheel surface; never ship tests or fixtures.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/spacerouter_cli",
+    "README.md",
+    "LICENSE",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
