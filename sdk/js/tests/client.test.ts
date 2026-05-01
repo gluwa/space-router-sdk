@@ -301,42 +301,63 @@ describe("SpaceRouter", () => {
     routed.close();
   });
 
-  it("injects IP-type header", async () => {
-    const client = new SpaceRouter("sr_live_test", {
-      ipType: "residential",
+  // --- routing header tests ---
+  // Region/ipType MUST land on the proxy CONNECT (in the ProxyAgent's
+  // headers dict) — NOT on the inner request — because the gateway can't
+  // read inside the TLS-tunnelled inner request. We assert by capturing the
+  // dispatcher passed to fetch and reading ProxyAgent's internal Symbol-keyed
+  // headers slot (set by the constructor in src/client.ts:buildAgent).
+  function getConnectHeaders(dispatcher: unknown): Record<string, string> {
+    // undici stores ProxyAgent's connect-time headers under Symbol("proxy headers")
+    const sym = Object.getOwnPropertySymbols(dispatcher as object).find(
+      (s) => s.description === "proxy headers",
+    );
+    if (!sym) return {};
+    const v = (dispatcher as Record<symbol, unknown>)[sym];
+    if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, string>;
+    return {};
+  }
 
+  it("injects IP-type header on proxy CONNECT", async () => {
+    let captured: any;
+    fetchSpy.mockImplementation(async (_u: any, init: any) => {
+      captured = init?.dispatcher;
+      return makeResponse(200);
     });
-
+    const client = new SpaceRouter("sr_live_test", { ipType: "residential" });
     await client.get("http://example.com");
-
-    expect(fetchSpy).toHaveBeenCalledOnce();
-    const callArgs = fetchSpy.mock.calls[0];
-    const headers = callArgs[1].headers;
-    expect(headers["X-SpaceRouter-IP-Type"]).toBe("residential");
+    const h = getConnectHeaders(captured);
+    expect(h["X-SpaceRouter-IP-Type"]).toBe("residential");
     client.close();
   });
 
   it("does not inject IP-type header when unset", async () => {
+    let captured: any;
+    fetchSpy.mockImplementation(async (_u: any, init: any) => {
+      captured = init?.dispatcher;
+      return makeResponse(200);
+    });
     const client = new SpaceRouter("sr_live_test");
     await client.get("http://example.com");
-
-    const headers = fetchSpy.mock.calls[0][1].headers;
-    expect(headers["X-SpaceRouter-IP-Type"]).toBeUndefined();
+    const h = getConnectHeaders(captured);
+    expect(h["X-SpaceRouter-IP-Type"]).toBeUndefined();
     client.close();
   });
 
-  it("injects both region and IP-type headers", async () => {
+  it("injects both region and IP-type headers on proxy CONNECT", async () => {
+    let captured: any;
+    fetchSpy.mockImplementation(async (_u: any, init: any) => {
+      captured = init?.dispatcher;
+      return makeResponse(200);
+    });
     const client = new SpaceRouter("sr_live_test", {
       region: "US",
       ipType: "mobile",
-
     });
-
     await client.get("http://example.com");
-
-    const headers = fetchSpy.mock.calls[0][1].headers;
-    expect(headers["X-SpaceRouter-Region"]).toBe("US");
-    expect(headers["X-SpaceRouter-IP-Type"]).toBe("mobile");
+    const h = getConnectHeaders(captured);
+    expect(h["X-SpaceRouter-Region"]).toBe("US");
+    expect(h["X-SpaceRouter-IP-Type"]).toBe("mobile");
     client.close();
   });
 
@@ -352,27 +373,29 @@ describe("SpaceRouter", () => {
     );
   });
 
-  it("injects routing headers", async () => {
-    const client = new SpaceRouter("sr_live_test", {
-      region: "US",
-
+  it("injects routing headers on proxy CONNECT", async () => {
+    let captured: any;
+    fetchSpy.mockImplementation(async (_u: any, init: any) => {
+      captured = init?.dispatcher;
+      return makeResponse(200);
     });
-
+    const client = new SpaceRouter("sr_live_test", { region: "US" });
     await client.get("http://example.com");
-
-    expect(fetchSpy).toHaveBeenCalledOnce();
-    const callArgs = fetchSpy.mock.calls[0];
-    const headers = callArgs[1].headers;
-    expect(headers["X-SpaceRouter-Region"]).toBe("US");
+    const h = getConnectHeaders(captured);
+    expect(h["X-SpaceRouter-Region"]).toBe("US");
     client.close();
   });
 
   it("does not inject routing headers when unset", async () => {
+    let captured: any;
+    fetchSpy.mockImplementation(async (_u: any, init: any) => {
+      captured = init?.dispatcher;
+      return makeResponse(200);
+    });
     const client = new SpaceRouter("sr_live_test");
     await client.get("http://example.com");
-
-    const headers = fetchSpy.mock.calls[0][1].headers;
-    expect(headers["X-SpaceRouter-Region"]).toBeUndefined();
+    const h = getConnectHeaders(captured);
+    expect(h["X-SpaceRouter-Region"]).toBeUndefined();
     client.close();
   });
 

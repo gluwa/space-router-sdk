@@ -164,11 +164,23 @@ export class EscrowClient {
     return { wallet: this._walletClient, account: this._account };
   }
 
-  /** Approve the escrow contract to pull `amount` tokens. */
+  /**
+   * Send a write tx and wait for it to be mined before resolving. All write
+   * helpers below funnel through this so callers can immediately query state
+   * (e.g. `balance`) right after `await deposit(...)` and see post-tx values.
+   */
+  private async _sendAndWait(args: Parameters<WalletClient["writeContract"]>[0]): Promise<Hash> {
+    const { wallet } = this._requireSigner();
+    const hash = await wallet.writeContract(args);
+    await this._publicClient.waitForTransactionReceipt({ hash });
+    return hash;
+  }
+
+  /** Approve the escrow contract to pull `amount` tokens. Awaits receipt. */
   async approve(amount: bigint): Promise<Hash> {
     if (amount <= 0n) throw new Error("amount must be positive");
-    const { wallet, account } = this._requireSigner();
-    return wallet.writeContract({
+    const { account } = this._requireSigner();
+    return this._sendAndWait({
       account,
       chain: null,
       address: this.tokenAddress,
@@ -181,11 +193,11 @@ export class EscrowClient {
   /**
    * Deposit `amount` tokens into escrow. If `autoApprove` is true (default)
    * and the current allowance is insufficient, sends an `approve` tx first
-   * and waits for it to land.
+   * (which itself waits for receipt). Returns once the deposit tx is mined.
    */
   async deposit(amount: bigint, autoApprove = true): Promise<Hash> {
     if (amount <= 0n) throw new Error("amount must be positive");
-    const { wallet, account } = this._requireSigner();
+    const { account } = this._requireSigner();
 
     if (autoApprove) {
       const current = await this._publicClient.readContract({
@@ -195,14 +207,11 @@ export class EscrowClient {
         args: [account.address, this.contractAddress],
       });
       if (current < amount) {
-        const approvalHash = await this.approve(amount);
-        await this._publicClient.waitForTransactionReceipt({
-          hash: approvalHash,
-        });
+        await this.approve(amount);  // already awaits receipt
       }
     }
 
-    return wallet.writeContract({
+    return this._sendAndWait({
       account,
       chain: null,
       address: this.contractAddress,
@@ -212,11 +221,11 @@ export class EscrowClient {
     });
   }
 
-  /** Begin a withdrawal of `amount` tokens (timelock applies). */
+  /** Begin a withdrawal of `amount` tokens (timelock applies). Awaits receipt. */
   async initiateWithdrawal(amount: bigint): Promise<Hash> {
     if (amount <= 0n) throw new Error("amount must be positive");
-    const { wallet, account } = this._requireSigner();
-    return wallet.writeContract({
+    const { account } = this._requireSigner();
+    return this._sendAndWait({
       account,
       chain: null,
       address: this.contractAddress,
@@ -226,10 +235,10 @@ export class EscrowClient {
     });
   }
 
-  /** Finalise a withdrawal whose timelock has elapsed. */
+  /** Finalise a withdrawal whose timelock has elapsed. Awaits receipt. */
   async executeWithdrawal(): Promise<Hash> {
-    const { wallet, account } = this._requireSigner();
-    return wallet.writeContract({
+    const { account } = this._requireSigner();
+    return this._sendAndWait({
       account,
       chain: null,
       address: this.contractAddress,
@@ -238,10 +247,10 @@ export class EscrowClient {
     });
   }
 
-  /** Cancel a pending withdrawal. */
+  /** Cancel a pending withdrawal. Awaits receipt. */
   async cancelWithdrawal(): Promise<Hash> {
-    const { wallet, account } = this._requireSigner();
-    return wallet.writeContract({
+    const { account } = this._requireSigner();
+    return this._sendAndWait({
       account,
       chain: null,
       address: this.contractAddress,
