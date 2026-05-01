@@ -61,6 +61,8 @@ function buildAgent(
   apiKey: string,
   gatewayUrl: string,
   protocol: "http" | "socks5",
+  region?: string,
+  ipType?: IpType,
 ): ProxyAgent | SocksProxyAgent {
   const parsed = new URL(gatewayUrl);
   const host = parsed.hostname || "localhost";
@@ -77,9 +79,13 @@ function buildAgent(
   // undici sends `proxy-authorization` (lowercase) but some proxy servers
   // require title-case `Proxy-Authorization`.  Use explicit headers instead
   // of the `token` option to control the casing.
+  // Region/ipType MUST land on the proxy CONNECT (gateway can't read inside
+  // the inner TLS tunnel), so we stamp them onto the agent's headers map.
   const proxyHeaders: Record<string, string> = {
     "Proxy-Authorization": `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
   };
+  if (region) proxyHeaders["X-SpaceRouter-Region"] = region;
+  if (ipType) proxyHeaders["X-SpaceRouter-IP-Type"] = ipType;
 
   return new ProxyAgent({ uri: proxyUrl, headers: proxyHeaders });
 }
@@ -194,7 +200,7 @@ export class SpaceRouter {
     this._ipType = options?.ipType;
     if (this._region) validateRegion(this._region);
     this._timeout = options?.timeout ?? DEFAULT_TIMEOUT;
-    this._agent = buildAgent(apiKey, this._gatewayUrl, this._protocol);
+    this._agent = buildAgent(apiKey, this._gatewayUrl, this._protocol, this._region, this._ipType);
     this._payment = options?.payment;
     this._autoSettle = options?.autoSettle ?? false;
   }
@@ -207,15 +213,10 @@ export class SpaceRouter {
     url: string,
     options?: RequestOptions,
   ): Promise<ProxyResponse> {
-    // User headers first; routing + payment headers take precedence on conflict.
+    // User-supplied inner-request headers — these ride inside the TLS tunnel
+    // and are NOT visible to the gateway. Routing/payment headers go on the
+    // proxy CONNECT below.
     const headers: Record<string, string> = { ...options?.headers };
-
-    if (this._region) {
-      headers["X-SpaceRouter-Region"] = this._region;
-    }
-    if (this._ipType) {
-      headers["X-SpaceRouter-IP-Type"] = this._ipType;
-    }
 
     // v1.5 payment header injection — fetch fresh challenge per request.
     // Payment headers MUST land on the proxy CONNECT (not on the inner
@@ -238,12 +239,15 @@ export class SpaceRouter {
       const scheme = parsed.protocol.replace(":", "") || "https";
       const port = parsed.port || (scheme === "https" ? "443" : "8080");
       const proxyUrl = `${scheme}://${parsed.hostname}:${port}`;
+      const connectHeaders: Record<string, string> = {
+        "Proxy-Authorization": `Basic ${Buffer.from(`${this._apiKey}:`).toString("base64")}`,
+        ...paymentHeaders,
+      };
+      if (this._region) connectHeaders["X-SpaceRouter-Region"] = this._region;
+      if (this._ipType) connectHeaders["X-SpaceRouter-IP-Type"] = this._ipType;
       dispatcher = new ProxyAgent({
         uri: proxyUrl,
-        headers: {
-          "Proxy-Authorization": `Basic ${Buffer.from(`${this._apiKey}:`).toString("base64")}`,
-          ...paymentHeaders,
-        },
+        headers: connectHeaders,
       });
     }
 
@@ -341,12 +345,17 @@ export class SpaceRouter {
     region?: string;
     ipType?: IpType;
   }): SpaceRouter {
+    // Carry over payment / autoSettle / timeout — `withRouting` is meant to
+    // narrow the routing filter on an otherwise-identical client, not to
+    // strip the v1.5 escrow façade.
     return new SpaceRouter(this._apiKey, {
       gatewayUrl: this._gatewayUrl,
       protocol: this._protocol,
       region: options.region,
       ipType: options.ipType,
       timeout: this._timeout,
+      payment: this._payment,
+      autoSettle: this._autoSettle,
     });
   }
 

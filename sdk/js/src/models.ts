@@ -211,6 +211,11 @@ export class ProxyResponse {
     return this._response.headers.get("x-spacerouter-request-id") ?? undefined;
   }
 
+  /** ID of the Provider that served this request (`X-SpaceRouter-Node-Id`). */
+  get nodeId(): string | undefined {
+    return this._response.headers.get("x-spacerouter-node-id") ?? undefined;
+  }
+
   /** HTTP status code. */
   get status(): number {
     return this._response.status;
