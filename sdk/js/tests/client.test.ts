@@ -44,6 +44,48 @@ describe("ProxyResponse", () => {
     expect(resp.requestId).toBeUndefined();
   });
 
+  it("nodeId reads X-SpaceRouter-Node from inner response (HTTP target path)", () => {
+    const raw = makeResponse(200, {
+      headers: { "x-spacerouter-node": "node-http-1" },
+    });
+    const resp = new ProxyResponse(raw);
+    expect(resp.nodeId).toBe("node-http-1");
+  });
+
+  it("nodeId prefers CONNECT-captured metadata when both are present", () => {
+    // For HTTPS targets the inner Response can't carry SR headers (the
+    // tunnel is encrypted end-to-end), so the CONNECT capture is the
+    // only source. When both happen to be present (HTTP target served
+    // by a fallback path that also runs CONNECT capture), capture wins
+    // — it reflects the gateway's view at tunnel-establishment time.
+    const raw = makeResponse(200, {
+      headers: { "x-spacerouter-node": "from-inner" },
+    });
+    const resp = new ProxyResponse(raw, { nodeId: "from-connect" });
+    expect(resp.nodeId).toBe("from-connect");
+  });
+
+  it("nodeId is undefined when neither metadata nor inner header is set", () => {
+    const resp = new ProxyResponse(makeResponse(200));
+    expect(resp.nodeId).toBeUndefined();
+  });
+
+  it("requestId falls back to inner header when metadata absent", () => {
+    const raw = makeResponse(200, {
+      headers: { "x-spacerouter-request-id": "req-fallback" },
+    });
+    const resp = new ProxyResponse(raw);
+    expect(resp.requestId).toBe("req-fallback");
+  });
+
+  it("routingTag exposes home/fallback distinction", () => {
+    const raw = makeResponse(200, {
+      headers: { "x-spacerouter-routing": "home" },
+    });
+    const resp = new ProxyResponse(raw);
+    expect(resp.routingTag).toBe("home");
+  });
+
   it("delegates status", () => {
     const raw = makeResponse(201);
     const resp = new ProxyResponse(raw);

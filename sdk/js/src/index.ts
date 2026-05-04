@@ -34,6 +34,7 @@ export {
 } from "./identity.js";
 
 export { ProxyResponse, normalizeNode, normalizeRegisterResult } from "./models.js";
+export type { ProxyResponseMetadata } from "./models.js";
 export type {
   ApiKey,
   ApiKeyInfo,

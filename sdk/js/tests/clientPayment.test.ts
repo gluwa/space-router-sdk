@@ -103,8 +103,11 @@ describe("SpaceRouter v1.5 payment header injection", () => {
     // surface that matters is that it was constructed for THIS call.
     // We rely on the fact that on a non-paid call a different (shared)
     // dispatcher would be used (covered in the auto-key-path test below).
+    // CapturingProxyAgent is the rc.4 subclass of undici's ProxyAgent that
+    // snapshots CONNECT response headers (X-SpaceRouter-Node etc.) so
+    // ProxyResponse.nodeId works for HTTPS targets.
     const ctorName = capturedDispatcher?.constructor?.name;
-    expect(ctorName).toBe("ProxyAgent");
+    expect(ctorName).toBe("CapturingProxyAgent");
 
     client.close();
   });
