@@ -5,7 +5,6 @@
  * via HTTP or SOCKS5.
  */
 
-import { ProxyAgent } from "undici";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import {
   AuthenticationError,
@@ -18,6 +17,7 @@ import {
 import type { IpType, SpaceRouterOptions } from "./models.js";
 import { ProxyResponse } from "./models.js";
 import type { SpaceRouterSPACE } from "./payment/spacecoin.js";
+import { CapturingProxyAgent } from "./proxyAgent.js";
 
 const DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org";
 const DEFAULT_TIMEOUT = 30_000;
@@ -63,7 +63,7 @@ function buildAgent(
   protocol: "http" | "socks5",
   region?: string,
   ipType?: IpType,
-): ProxyAgent | SocksProxyAgent {
+): CapturingProxyAgent | SocksProxyAgent {
   const parsed = new URL(gatewayUrl);
   const host = parsed.hostname || "localhost";
   const scheme = parsed.protocol.replace(":", "") || "https";
@@ -87,7 +87,11 @@ function buildAgent(
   if (region) proxyHeaders["X-SpaceRouter-Region"] = region;
   if (ipType) proxyHeaders["X-SpaceRouter-IP-Type"] = ipType;
 
-  return new ProxyAgent({ uri: proxyUrl, headers: proxyHeaders });
+  // CapturingProxyAgent extends ProxyAgent and snapshots the CONNECT
+  // response headers (X-SpaceRouter-Node etc.) so they survive the hop
+  // through undici's fetch — ProxyResponse reads them back via the
+  // `metadata` argument set by the request layer below.
+  return new CapturingProxyAgent({ uri: proxyUrl, headers: proxyHeaders });
 }
 
 /** Check for proxy-layer errors and throw typed exceptions. */
@@ -188,7 +192,7 @@ export class SpaceRouter {
   private readonly _region: string | undefined;
   private readonly _ipType: IpType | undefined;
   private readonly _timeout: number;
-  private readonly _agent: ProxyAgent | SocksProxyAgent;
+  private readonly _agent: CapturingProxyAgent | SocksProxyAgent;
   private readonly _payment: SpaceRouterSPACE | undefined;
   private readonly _autoSettle: boolean;
 
@@ -245,7 +249,7 @@ export class SpaceRouter {
       };
       if (this._region) connectHeaders["X-SpaceRouter-Region"] = this._region;
       if (this._ipType) connectHeaders["X-SpaceRouter-IP-Type"] = this._ipType;
-      dispatcher = new ProxyAgent({
+      dispatcher = new CapturingProxyAgent({
         uri: proxyUrl,
         headers: connectHeaders,
       });
@@ -266,7 +270,18 @@ export class SpaceRouter {
       });
 
       await checkProxyErrors(response);
-      const proxyResponse = new ProxyResponse(response);
+      // For HTTPS targets the gateway emits X-SpaceRouter-Node / -Request-Id
+      // on the CONNECT 200 response. undici doesn't expose CONNECT headers
+      // to fetch's Response object, so we read them off the dispatcher
+      // instead — CapturingProxyAgent snapshotted them when the tunnel
+      // was established. SOCKS5 has no CONNECT header concept; metadata
+      // stays empty and ProxyResponse falls back to the inner-response
+      // header (HTTP target) or undefined.
+      const metadata =
+        dispatcher instanceof CapturingProxyAgent
+          ? dispatcher.capturedMetadata()
+          : undefined;
+      const proxyResponse = new ProxyResponse(response, metadata);
 
       // NOTE: do NOT close the per-request dispatcher here even though
       // we built it just for this call. fetch() returns when HEADERS
@@ -368,7 +383,7 @@ export class SpaceRouter {
       "close" in this._agent &&
       typeof this._agent.close === "function"
     ) {
-      (this._agent as ProxyAgent).close();
+      (this._agent as CapturingProxyAgent).close();
     }
   }
 

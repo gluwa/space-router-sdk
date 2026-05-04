@@ -320,7 +320,13 @@ class SpaceRouter:
         region: str | None = None,
         ip_type: str | None = None,
     ) -> SpaceRouter:
-        """Return a new client with different routing preferences."""
+        """Return a new client with different routing preferences.
+
+        Forwards the parent's ``verify`` and any other ``**httpx_kwargs``
+        so customisations like ``verify=False`` (testnet self-signed
+        certs) survive the clone — pre-rc.4 they were silently dropped
+        and the routing-derived child tripped ``CERTIFICATE_VERIFY_FAILED``.
+        """
         return SpaceRouter(
             self._api_key,
             gateway_url=self._gateway_url,
@@ -330,6 +336,8 @@ class SpaceRouter:
             timeout=self._timeout,
             payment=self._payment,
             auto_settle=self._auto_settle,
+            verify=self._verify,
+            **self._httpx_kwargs,
         )
 
     # -- Lifecycle ----------------------------------------------------------
@@ -469,7 +477,13 @@ class AsyncSpaceRouter:
         region: str | None = None,
         ip_type: str | None = None,
     ) -> AsyncSpaceRouter:
-        """Return a new client with different routing preferences."""
+        """Return a new client with different routing preferences.
+
+        Forwards the parent's ``verify`` and any other ``**httpx_kwargs``
+        so customisations like ``verify=False`` (testnet self-signed
+        certs) survive the clone — pre-rc.4 they were silently dropped
+        and the routing-derived child tripped ``CERTIFICATE_VERIFY_FAILED``.
+        """
         return AsyncSpaceRouter(
             self._api_key,
             gateway_url=self._gateway_url,
@@ -479,6 +493,8 @@ class AsyncSpaceRouter:
             timeout=self._timeout,
             payment=self._payment,
             auto_settle=self._auto_settle,
+            verify=self._verify,
+            **self._httpx_kwargs,
         )
 
     # -- Lifecycle ----------------------------------------------------------
