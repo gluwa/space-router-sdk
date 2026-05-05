@@ -138,16 +138,27 @@ class TestCheckProxyErrors:
     def test_503_no_nodes(self):
         resp = self._make_response(
             503,
-            json_body={"error": "no_nodes_available", "message": "..."},
+            json_body={"error": "no_nodes_available", "message": "specific msg"},
+        )
+        with pytest.raises(NoNodesAvailableError) as exc_info:
+            _check_proxy_errors(resp)
+        # Body's message wins when present.
+        assert "specific msg" in str(exc_info.value)
+
+    def test_503_empty_body_maps_to_no_nodes(self):
+        # Fly upstream timeout / generic 503 with no JSON body.
+        resp = self._make_response(503)
+        with pytest.raises(NoNodesAvailableError) as exc_info:
+            _check_proxy_errors(resp)
+        assert "No residential nodes currently available" in str(exc_info.value)
+
+    def test_503_other_shape_maps_to_no_nodes(self):
+        # Different body shape (no `error` key) still maps to typed error.
+        resp = self._make_response(
+            503, json_body={"detail": "upstream timeout"}
         )
         with pytest.raises(NoNodesAvailableError):
             _check_proxy_errors(resp)
-
-    def test_503_other_passes_through(self):
-        resp = self._make_response(
-            503, json_body={"error": "something_else", "message": "..."}
-        )
-        _check_proxy_errors(resp)  # should NOT raise
 
     def test_200_passes_through(self):
         resp = self._make_response(200)

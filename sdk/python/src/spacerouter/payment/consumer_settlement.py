@@ -75,7 +75,7 @@ class ConsumerSettlementClient:
         gateway_url: str,
         private_key: str,
         timeout: float = 10.0,
-        verify: bool = True,
+        verify: bool | str = True,
     ) -> None:
         """
         Parameters
@@ -87,8 +87,10 @@ class ConsumerSettlementClient:
             EIP-712 receipts.
         timeout : float
             HTTP timeout per call.
-        verify : bool
-            TLS verification (set False only for local dev).
+        verify : bool | str
+            TLS verification. ``True`` (default) uses the system CA
+            bundle; ``False`` disables verification (local dev only); a
+            path string selects a custom CA bundle.
         """
         self._gateway_url = gateway_url.rstrip("/")
         self._account = Account.from_key(private_key)
