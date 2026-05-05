@@ -232,10 +232,10 @@ describe("proxy error checking", () => {
     client.close();
   });
 
-  it("503 with no_nodes_available throws NoNodesAvailableError", async () => {
+  it("503 with no_nodes_available throws NoNodesAvailableError with body message", async () => {
     fetchSpy.mockResolvedValue(
       makeResponse(503, {
-        body: { error: "no_nodes_available", message: "..." },
+        body: { error: "no_nodes_available", message: "specific msg" },
       }),
     );
 
@@ -243,19 +243,34 @@ describe("proxy error checking", () => {
     await expect(client.get("http://example.com")).rejects.toThrow(
       NoNodesAvailableError,
     );
+    await expect(client.get("http://example.com")).rejects.toThrow(
+      /specific msg/,
+    );
     client.close();
   });
 
-  it("503 with other error passes through", async () => {
+  it("503 with empty body maps to NoNodesAvailableError (generic message)", async () => {
+    fetchSpy.mockResolvedValue(makeResponse(503));
+
+    const client = new SpaceRouter("sr_live_test");
+    await expect(client.get("http://example.com")).rejects.toThrow(
+      NoNodesAvailableError,
+    );
+    await expect(client.get("http://example.com")).rejects.toThrow(
+      /No residential nodes currently available/,
+    );
+    client.close();
+  });
+
+  it("503 with other body shape still maps to NoNodesAvailableError", async () => {
     fetchSpy.mockResolvedValue(
-      makeResponse(503, {
-        body: { error: "something_else", message: "..." },
-      }),
+      makeResponse(503, { body: { detail: "upstream timeout" } }),
     );
 
     const client = new SpaceRouter("sr_live_test");
-    const resp = await client.get("http://example.com");
-    expect(resp.status).toBe(503);
+    await expect(client.get("http://example.com")).rejects.toThrow(
+      NoNodesAvailableError,
+    );
     client.close();
   });
 

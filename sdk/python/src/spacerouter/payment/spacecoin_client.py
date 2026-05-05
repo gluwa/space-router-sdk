@@ -32,6 +32,15 @@ from spacerouter.payment.eip712 import EIP712Domain, Receipt
 logger = logging.getLogger(__name__)
 
 
+# HTTP verbs that callers sometimes try on SpaceRouterSPACE by mistake (e.g.
+# old QA bundles documenting ``consumer.get(url)``). The class is a wallet +
+# receipt signer, not an HTTP client; converting the cryptic AttributeError
+# into an actionable hint saves a round-trip with QA.
+_HTTP_METHOD_NAMES = frozenset({
+    "get", "post", "put", "patch", "delete", "head", "options", "request",
+})
+
+
 class SpaceRouterSPACE:
     """High-level Consumer client for SPACE-token proxy payments.
 
@@ -53,6 +62,13 @@ class SpaceRouterSPACE:
         EIP-712 domain version (default: ``1``).
     max_rate_per_gb : int, optional
         Maximum acceptable rate per GB (reject receipts above this).
+    timeout : float
+        HTTP timeout (seconds) used for gateway calls (challenge fetch,
+        settlement). Default 30.0.
+    verify : bool | str
+        TLS verification for gateway calls. ``True`` (default) uses the
+        system CA bundle; ``False`` disables verification (local dev
+        only); a path string selects a custom CA bundle.
     """
 
     def __init__(
@@ -68,6 +84,8 @@ class SpaceRouterSPACE:
         byte_tolerance: float = 0.05,
         byte_tolerance_abs_min: int = 1024,
         strict_settlement: bool = False,
+        timeout: float = 30.0,
+        verify: bool | str = True,
     ) -> None:
         self.gateway_url = gateway_url.rstrip("/")
         self.proxy_url = proxy_url.rstrip("/")
@@ -93,20 +111,55 @@ class SpaceRouterSPACE:
         # rejected receipts. Read by SpaceRouter(auto_settle=True) so the
         # caller's strict choice flows through the auto-pay path. Spec §9.
         self.strict_settlement = strict_settlement
+        # HTTP knobs for gateway calls. ``_timeout`` covers both the challenge
+        # fetch here and the ConsumerSettlementClient instance handed out by
+        # ``sync_receipts``; ``_verify`` plumbs the same TLS bundle through.
+        self._timeout = timeout
+        self._verify = verify
 
     @property
     def address(self) -> str:
         return self.wallet.address
+
+    def __getattr__(self, name: str):
+        """Catch HTTP-verb-style accesses on the wallet façade.
+
+        ``SpaceRouterSPACE`` is the payment object passed to
+        ``SpaceRouter(payment=...)``; it does not itself send HTTP. Old
+        QA bundles still document ``consumer.get(url)`` which crashes
+        with a cryptic ``AttributeError``. Surface a directive hint so
+        the caller knows to wrap with :class:`SpaceRouter` instead.
+
+        ``__getattr__`` only runs after normal attribute resolution has
+        failed, so this never shadows real attributes.
+        """
+        if name in _HTTP_METHOD_NAMES:
+            raise AttributeError(
+                f"SpaceRouterSPACE has no `.{name}()` method — it's a "
+                "wallet + receipt signer, not an HTTP client.\n"
+                "For paid HTTP requests, wrap it with SpaceRouter:\n"
+                "\n"
+                "    from spacerouter import SpaceRouter\n"
+                "    with SpaceRouter(consumer.address.lower(), "
+                "payment=consumer, auto_settle=True) as cli:\n"
+                "        resp = cli." + name + "(url)\n"
+                "\n"
+                "See https://docs.spacecoin.org/spacerouter/consumers/"
+                "pay-with-space.html#step-4"
+            )
+        raise AttributeError(
+            f"{type(self).__name__!s} object has no attribute {name!r}"
+        )
 
     async def request_challenge(self) -> str:
         """Request a one-time challenge from the gateway.
 
         Returns the challenge string.
         """
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=self._verify) as client:
             resp = await client.get(
                 f"{self.gateway_url}/auth/challenge",
-                timeout=10.0,
+                timeout=self._timeout,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -145,9 +198,13 @@ class SpaceRouterSPACE:
         )
         # Reuse the consumer's private key. ConsumerSettlementClient holds
         # its own httpx client so callers don't need to pool one here.
+        # Plumb the same timeout/verify so settlement honours the caller's
+        # TLS posture and timeout budget.
         settler = ConsumerSettlementClient(
             gateway_url=self.gateway_url,
             private_key=self._private_key,
+            timeout=self._timeout,
+            verify=self._verify,
         )
         effective_strict = (
             self.strict_settlement if strict is None else strict

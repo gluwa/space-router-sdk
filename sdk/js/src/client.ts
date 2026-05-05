@@ -146,18 +146,19 @@ async function checkProxyErrors(response: Response): Promise<void> {
   }
 
   if (response.status === 503) {
+    // Any 503 from the proxy chain — gateway-rejected, upstream timeout,
+    // empty body, etc. — is mapped to NoNodesAvailableError so callers
+    // get a typed signal instead of crashing on response.json().
+    let message = "No residential nodes currently available";
     try {
       const body = (await response.clone().json()) as Record<string, unknown>;
-      if (body.error === "no_nodes_available") {
-        throw new NoNodesAvailableError(
-          "No residential nodes currently available",
-          { statusCode: 503, requestId },
-        );
+      if (typeof body.message === "string" && body.message.length > 0) {
+        message = body.message;
       }
-    } catch (e) {
-      if (e instanceof NoNodesAvailableError) throw e;
-      // JSON parse failure — not a SpaceRouter error, pass through
+    } catch {
+      // JSON parse failure — fall through with the generic message.
     }
+    throw new NoNodesAvailableError(message, { statusCode: 503, requestId });
   }
 }
 

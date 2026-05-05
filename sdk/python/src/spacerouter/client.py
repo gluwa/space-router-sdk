@@ -179,16 +179,23 @@ def _check_proxy_errors(response: httpx.Response) -> None:
         )
 
     if response.status_code == 503:
+        # Any 503 from the proxy chain — gateway-rejected, Fly upstream
+        # timeout, empty body, etc. — is mapped to NoNodesAvailableError so
+        # callers get a typed signal instead of crashing on response.json().
         try:
             body = response.json()
         except Exception:
             body = {}
-        if body.get("error") == "no_nodes_available":
-            raise NoNodesAvailableError(
-                "No residential nodes currently available",
-                status_code=503,
-                request_id=request_id,
-            )
+        message = "No residential nodes currently available"
+        if isinstance(body, dict):
+            specific = body.get("message")
+            if isinstance(specific, str) and specific:
+                message = specific
+        raise NoNodesAvailableError(
+            message,
+            status_code=503,
+            request_id=request_id,
+        )
 
 
 # ---------------------------------------------------------------------------

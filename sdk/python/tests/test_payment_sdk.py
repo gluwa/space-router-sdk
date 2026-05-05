@@ -329,3 +329,185 @@ class TestByteCountValidation:
         assert len(sig) == 132  # 0x + 130 hex chars (65 bytes)
 
 
+# ── HTTP-method guard (Fix 1) ─────────────────────────────────────────
+
+
+class TestSpaceRouterSPACEHttpGuard:
+    """``SpaceRouterSPACE`` is a wallet, not an HTTP client.
+
+    Stale QA bundles still call ``consumer.get(url)``; we want a hint, not
+    a cryptic AttributeError.
+    """
+
+    def _client(self) -> SpaceRouterSPACE:
+        return SpaceRouterSPACE(
+            gateway_url="http://localhost:8081",
+            proxy_url="http://localhost:8080",
+            private_key=CLIENT_KEY,
+            chain_id=102031,
+            escrow_contract="0xC5740e4e9175301a24FB6d22bA184b8ec0762852",
+        )
+
+    @pytest.mark.parametrize(
+        "verb",
+        ["get", "post", "put", "patch", "delete", "head", "options", "request"],
+    )
+    def test_http_verb_access_raises_with_hint(self, verb):
+        c = self._client()
+        with pytest.raises(AttributeError) as exc_info:
+            getattr(c, verb)
+        msg = str(exc_info.value)
+        # Must point the caller at the canonical wrap pattern.
+        assert "payment=consumer" in msg
+        assert "SpaceRouter" in msg
+        assert f".{verb}()" in msg
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "address", "wallet", "domain", "gateway_url", "proxy_url",
+            "max_rate_per_gb", "byte_tolerance", "byte_tolerance_abs_min",
+            "strict_settlement", "request_challenge", "build_auth_headers",
+            "sign_receipt", "sync_receipts", "validate_receipt",
+            "sign_receipt_after_validation",
+        ],
+    )
+    def test_legitimate_attributes_resolve(self, name):
+        c = self._client()
+        # Just resolving (no AttributeError) is enough to prove __getattr__
+        # doesn't shadow a real attribute / method. Some attributes (e.g.
+        # max_rate_per_gb) default to None, which is fine.
+        sentinel = object()
+        assert getattr(c, name, sentinel) is not sentinel
+
+    def test_truly_missing_attribute_still_raises(self):
+        c = self._client()
+        with pytest.raises(AttributeError):
+            _ = c.no_such_attribute_xyz
+
+
+# ── timeout / verify plumbing (Fix 2) ─────────────────────────────────
+
+
+class TestSpaceRouterSPACEHttpKnobs:
+    """``timeout`` and ``verify`` must reach ``httpx.AsyncClient``."""
+
+    def _client(self, **overrides) -> SpaceRouterSPACE:
+        defaults = {
+            "gateway_url": "http://localhost:8081",
+            "proxy_url": "http://localhost:8080",
+            "private_key": CLIENT_KEY,
+            "chain_id": 102031,
+            "escrow_contract": "0xC5740e4e9175301a24FB6d22bA184b8ec0762852",
+        }
+        defaults.update(overrides)
+        return SpaceRouterSPACE(**defaults)
+
+    def test_default_timeout_and_verify(self):
+        c = self._client()
+        assert c._timeout == 30.0
+        assert c._verify is True
+
+    def test_custom_values_stored(self):
+        c = self._client(timeout=60.0, verify=False)
+        assert c._timeout == 60.0
+        assert c._verify is False
+
+    @pytest.mark.asyncio
+    async def test_request_challenge_passes_verify_and_timeout(self, monkeypatch):
+        """Verify ``httpx.AsyncClient(verify=...)`` and ``client.get(timeout=...)``
+        both see the values configured on ``SpaceRouterSPACE``.
+        """
+        from spacerouter.payment import spacecoin_client as mod
+
+        captured: dict = {"client_kwargs": None, "get_kwargs": None}
+
+        class _StubResp:
+            def raise_for_status(self): pass
+            def json(self): return {"challenge": "abc"}
+
+        class _StubClient:
+            def __init__(self, *args, **kwargs):
+                captured["client_kwargs"] = kwargs
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url, **kwargs):
+                captured["get_kwargs"] = kwargs
+                return _StubResp()
+
+        monkeypatch.setattr(mod.httpx, "AsyncClient", _StubClient)
+
+        c = self._client(timeout=60.0, verify=False)
+        challenge = await c.request_challenge()
+        assert challenge == "abc"
+        assert captured["client_kwargs"] == {"verify": False}
+        assert captured["get_kwargs"] == {"timeout": 60.0}
+
+    @pytest.mark.asyncio
+    async def test_request_challenge_default_kwargs(self, monkeypatch):
+        from spacerouter.payment import spacecoin_client as mod
+
+        captured: dict = {}
+
+        class _StubResp:
+            def raise_for_status(self): pass
+            def json(self): return {"challenge": "ok"}
+
+        class _StubClient:
+            def __init__(self, *args, **kwargs):
+                captured["client_kwargs"] = kwargs
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url, **kwargs):
+                captured["get_kwargs"] = kwargs
+                return _StubResp()
+
+        monkeypatch.setattr(mod.httpx, "AsyncClient", _StubClient)
+
+        c = self._client()
+        await c.request_challenge()
+        assert captured["client_kwargs"] == {"verify": True}
+        assert captured["get_kwargs"] == {"timeout": 30.0}
+
+    @pytest.mark.asyncio
+    async def test_sync_receipts_plumbs_timeout_verify(self, monkeypatch):
+        """``sync_receipts`` instantiates ``ConsumerSettlementClient`` with
+        the same ``timeout`` and ``verify`` configured on the wallet.
+        """
+        from spacerouter.payment import spacecoin_client as mod
+
+        captured: dict = {}
+
+        class _StubSettler:
+            def __init__(self, **kwargs):
+                captured["init_kwargs"] = kwargs
+
+            async def sync_receipts(self, *, limit, strict):
+                captured["sync_kwargs"] = {"limit": limit, "strict": strict}
+                return {"accepted": [], "rejected": [], "pending_count": 0}
+
+        # Patch the lazily-imported symbol at its source module so
+        # SpaceRouterSPACE.sync_receipts picks up the stub.
+        from spacerouter.payment import consumer_settlement
+        monkeypatch.setattr(
+            consumer_settlement, "ConsumerSettlementClient", _StubSettler,
+        )
+
+        c = self._client(timeout=45.0, verify="/etc/ssl/cert.pem")
+        result = await c.sync_receipts(limit=5)
+        assert result["pending_count"] == 0
+        assert captured["init_kwargs"]["timeout"] == 45.0
+        assert captured["init_kwargs"]["verify"] == "/etc/ssl/cert.pem"
+        assert captured["init_kwargs"]["gateway_url"] == "http://localhost:8081"
+        assert captured["sync_kwargs"] == {"limit": 5, "strict": False}
+
