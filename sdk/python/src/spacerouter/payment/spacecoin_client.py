@@ -47,9 +47,15 @@ class SpaceRouterSPACE:
     Parameters
     ----------
     gateway_url : str
-        Management API URL (e.g., ``http://gateway:8081``) for /auth/challenge.
+        Gateway URL used for management-API calls (``/auth/challenge``,
+        ``/leg1/...``) when ``management_url`` is not set. In a typical
+        deployment the proxy listener is on :8080 (or :443) and the
+        management API is on :8081 — those are different endpoints. If
+        you only have one URL handy, point ``gateway_url`` at the
+        management endpoint.
     proxy_url : str
-        Proxy endpoint URL (e.g., ``http://gateway:8080``).
+        Proxy endpoint URL (e.g., ``http://gateway:8080``). This is what
+        the SDK uses for HTTP CONNECT.
     private_key : str
         Consumer's wallet private key.
     chain_id : int
@@ -69,6 +75,17 @@ class SpaceRouterSPACE:
         TLS verification for gateway calls. ``True`` (default) uses the
         system CA bundle; ``False`` disables verification (local dev
         only); a path string selects a custom CA bundle.
+    management_url : str, optional
+        Explicit URL for the gateway's management API (the host that
+        serves ``/auth/challenge`` and ``/leg1/*``). If your gateway
+        uses different ports for proxy traffic vs. management API — the
+        typical deployment, with proxy on :8080 and management on
+        :8081 — pass ``management_url`` so the SDK never confuses the
+        two. When ``None`` (default) the SDK falls back to
+        ``gateway_url`` for management calls, preserving the rc.5
+        single-URL behaviour. Sending ``GET /auth/challenge`` to the
+        proxy listener returns ``HTTP 407`` because that listener only
+        accepts ``CONNECT`` — passing ``management_url`` is the fix.
     """
 
     def __init__(
@@ -86,9 +103,16 @@ class SpaceRouterSPACE:
         strict_settlement: bool = False,
         timeout: float = 30.0,
         verify: bool | str = True,
+        management_url: Optional[str] = None,
     ) -> None:
         self.gateway_url = gateway_url.rstrip("/")
         self.proxy_url = proxy_url.rstrip("/")
+        # Management API host for /auth/challenge and /leg1/*. Defaults
+        # to ``gateway_url`` so existing single-URL callers keep working;
+        # the explicit kwarg lets deployments split proxy (:8080) from
+        # management (:8081) — sending GET /auth/challenge to the proxy
+        # listener returns 407 because that port only speaks CONNECT.
+        self.management_url = (management_url or gateway_url).rstrip("/")
         self.wallet = ClientPaymentWallet(private_key)
         # Retained so sync_receipts() can hand it to ConsumerSettlementClient
         # without reaching into wallet internals. Kept private.
@@ -154,11 +178,16 @@ class SpaceRouterSPACE:
     async def request_challenge(self) -> str:
         """Request a one-time challenge from the gateway.
 
+        Hits the management API (``self.management_url``) — that is the
+        endpoint that serves ``GET /auth/challenge``. The proxy listener
+        on :8080 / :443 only handles ``CONNECT`` and returns 407 for a
+        plain GET, so this call must never go there.
+
         Returns the challenge string.
         """
         async with httpx.AsyncClient(verify=self._verify) as client:
             resp = await client.get(
-                f"{self.gateway_url}/auth/challenge",
+                f"{self.management_url}/auth/challenge",
                 timeout=self._timeout,
             )
             resp.raise_for_status()
@@ -199,9 +228,12 @@ class SpaceRouterSPACE:
         # Reuse the consumer's private key. ConsumerSettlementClient holds
         # its own httpx client so callers don't need to pool one here.
         # Plumb the same timeout/verify so settlement honours the caller's
-        # TLS posture and timeout budget.
+        # TLS posture and timeout budget. Also pass ``management_url`` —
+        # ``/leg1/*`` is on the same management host as ``/auth/challenge``
+        # and pre-rc.6 we silently used ``gateway_url`` here, which broke
+        # for deployments that split the proxy and management ports.
         settler = ConsumerSettlementClient(
-            gateway_url=self.gateway_url,
+            gateway_url=self.management_url,
             private_key=self._private_key,
             timeout=self._timeout,
             verify=self._verify,

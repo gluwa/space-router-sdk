@@ -112,6 +112,11 @@ export class EscrowClient {
    * and returns `(amount, unlockAt, exists)`; we surface `unlockAt` as
    * `readyAt` and drop `exists` (callers can derive it from
    * `amount > 0n`).
+   *
+   * Use this to see the locked-but-pending amount during a withdrawal.
+   * Important: `balance(address)` does **NOT** include this amount —
+   * the on-chain balance is only debited when `executeWithdrawal`
+   * completes. See `initiateWithdrawal` for the three-phase lifecycle.
    */
   async withdrawalRequest(
     address: `0x${string}`,
@@ -221,7 +226,26 @@ export class EscrowClient {
     });
   }
 
-  /** Begin a withdrawal of `amount` tokens (timelock applies). Awaits receipt. */
+  /**
+   * Phase 1 of 3 — record a withdrawal request with a 5-day timelock.
+   * Awaits receipt.
+   *
+   * This call does **not** move tokens. It only stores
+   * `(amount, unlockAt)` on-chain so the funds are reserved for the
+   * eventual `executeWithdrawal` and the timelock can run. Therefore
+   * `balance(address)` is unchanged after `initiateWithdrawal`
+   * resolves. Query `withdrawalRequest(address)` to see the
+   * locked-but-pending amount.
+   *
+   * Lifecycle:
+   *   1. `initiateWithdrawal(amount)` — record request, no balance
+   *      change.
+   *   2. `executeWithdrawal()` — after timelock elapses, actually
+   *      transfers tokens out and debits `balance`.
+   *   3. `cancelWithdrawal()` — at any point before step 2, clear
+   *      the request. Also no balance change because no debit ever
+   *      happened.
+   */
   async initiateWithdrawal(amount: bigint): Promise<Hash> {
     if (amount <= 0n) throw new Error("amount must be positive");
     const { account } = this._requireSigner();
@@ -235,7 +259,16 @@ export class EscrowClient {
     });
   }
 
-  /** Finalise a withdrawal whose timelock has elapsed. Awaits receipt. */
+  /**
+   * Phase 2 of 3 — finalise a withdrawal whose timelock has elapsed.
+   * Awaits receipt.
+   *
+   * This is the **only** phase that actually moves tokens. The
+   * contract transfers the previously-requested amount to the client
+   * and debits `balance(address)` by the same amount. Reverts if no
+   * request exists or the unlock time has not yet passed. See
+   * `initiateWithdrawal` for the full lifecycle.
+   */
   async executeWithdrawal(): Promise<Hash> {
     const { account } = this._requireSigner();
     return this._sendAndWait({
@@ -247,7 +280,16 @@ export class EscrowClient {
     });
   }
 
-  /** Cancel a pending withdrawal. Awaits receipt. */
+  /**
+   * Phase 3 (alternate) of 3 — clear the pending withdrawal request.
+   * Awaits receipt.
+   *
+   * Removes the on-chain request record. Because `initiateWithdrawal`
+   * never debited the balance, this call also produces **no balance
+   * change** — that is by design, not a bug. `balance(address)` was
+   * already correct throughout. See `initiateWithdrawal` for the
+   * three-phase lifecycle.
+   */
   async cancelWithdrawal(): Promise<Hash> {
     const { account } = this._requireSigner();
     return this._sendAndWait({
