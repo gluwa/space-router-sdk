@@ -511,3 +511,120 @@ class TestSpaceRouterSPACEHttpKnobs:
         assert captured["init_kwargs"]["gateway_url"] == "http://localhost:8081"
         assert captured["sync_kwargs"] == {"limit": 5, "strict": False}
 
+
+# ── management_url plumbing (Fix: MAJ-1) ──────────────────────────────
+
+
+class TestSpaceRouterSPACEManagementURL:
+    """``management_url`` decouples the management API from the proxy URL.
+
+    Previously ``gateway_url`` did double duty: callers who passed the
+    proxy listener URL there ate ``HTTP 407`` from
+    ``GET /auth/challenge`` because the proxy port only speaks CONNECT.
+    """
+
+    def _client(self, **overrides) -> SpaceRouterSPACE:
+        defaults = {
+            "gateway_url": "http://localhost:8080",  # proxy URL
+            "proxy_url": "http://localhost:8080",
+            "private_key": CLIENT_KEY,
+            "chain_id": 102031,
+            "escrow_contract": "0xC5740e4e9175301a24FB6d22bA184b8ec0762852",
+        }
+        defaults.update(overrides)
+        return SpaceRouterSPACE(**defaults)
+
+    def test_management_url_defaults_to_gateway_url(self):
+        """Backward compat: omit ``management_url`` → fall back to gateway."""
+        c = self._client()
+        assert c.management_url == "http://localhost:8080"
+
+    def test_management_url_overrides_gateway_url(self):
+        c = self._client(management_url="http://localhost:8081")
+        assert c.management_url == "http://localhost:8081"
+        # gateway_url left untouched.
+        assert c.gateway_url == "http://localhost:8080"
+
+    def test_management_url_strips_trailing_slash(self):
+        c = self._client(management_url="http://localhost:8081/")
+        assert c.management_url == "http://localhost:8081"
+
+    @pytest.mark.asyncio
+    async def test_request_challenge_hits_management_url(self, monkeypatch):
+        from spacerouter.payment import spacecoin_client as mod
+
+        captured: dict = {}
+
+        class _StubResp:
+            def raise_for_status(self): pass
+            def json(self): return {"challenge": "ok"}
+
+        class _StubClient:
+            def __init__(self, *args, **kwargs):
+                pass
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *exc):
+                return False
+            async def get(self, url, **kwargs):
+                captured["url"] = url
+                return _StubResp()
+
+        monkeypatch.setattr(mod.httpx, "AsyncClient", _StubClient)
+
+        c = self._client(management_url="http://localhost:8081")
+        await c.request_challenge()
+        # MUST go to management URL, not the proxy gateway URL.
+        assert captured["url"] == "http://localhost:8081/auth/challenge"
+
+    @pytest.mark.asyncio
+    async def test_request_challenge_falls_back_to_gateway_url(self, monkeypatch):
+        """When ``management_url`` omitted, behaviour matches rc.5."""
+        from spacerouter.payment import spacecoin_client as mod
+
+        captured: dict = {}
+
+        class _StubResp:
+            def raise_for_status(self): pass
+            def json(self): return {"challenge": "ok"}
+
+        class _StubClient:
+            def __init__(self, *args, **kwargs):
+                pass
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *exc):
+                return False
+            async def get(self, url, **kwargs):
+                captured["url"] = url
+                return _StubResp()
+
+        monkeypatch.setattr(mod.httpx, "AsyncClient", _StubClient)
+
+        c = self._client(gateway_url="http://localhost:9999")
+        await c.request_challenge()
+        assert captured["url"] == "http://localhost:9999/auth/challenge"
+
+    @pytest.mark.asyncio
+    async def test_sync_receipts_uses_management_url(self, monkeypatch):
+        """ConsumerSettlementClient must be built with the management URL."""
+        captured: dict = {}
+
+        class _StubSettler:
+            def __init__(self, **kwargs):
+                captured["init_kwargs"] = kwargs
+            async def sync_receipts(self, *, limit, strict):
+                return {"accepted": [], "rejected": [], "pending_count": 0}
+
+        from spacerouter.payment import consumer_settlement
+        monkeypatch.setattr(
+            consumer_settlement, "ConsumerSettlementClient", _StubSettler,
+        )
+
+        c = self._client(
+            gateway_url="http://localhost:8080",
+            management_url="http://localhost:8081",
+        )
+        await c.sync_receipts()
+        assert captured["init_kwargs"]["gateway_url"] == "http://localhost:8081"
+

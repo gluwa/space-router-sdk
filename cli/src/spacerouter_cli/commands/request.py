@@ -39,6 +39,17 @@ TimeoutOpt = Annotated[Optional[float], typer.Option("--timeout", help="Request 
 OutputOpt = Annotated[str, typer.Option("--output", help="Output mode: json (structured) or raw (body only).")]
 FollowOpt = Annotated[bool, typer.Option("--follow-redirects", help="Follow HTTP redirects.")]
 DataOpt = Annotated[Optional[str], typer.Option("--data", "-d", help="JSON request body.")]
+InsecureOpt = Annotated[
+    bool,
+    typer.Option(
+        "--insecure", "-k",
+        help=(
+            "Skip TLS verification on the proxy CONNECT and management "
+            "API calls. Use only for local/test gateways with self-signed "
+            "certs — never against production."
+        ),
+    ),
+]
 
 # -- escrow payment mode -----------------------------------------------------
 
@@ -133,6 +144,7 @@ def _do_request(
     pay_key: str | None = None,
     escrow_contract: str | None = None,
     chain_id: int | None = None,
+    insecure: bool = False,
 ) -> None:
     cfg = resolve_config(api_key=api_key, gateway_url=gateway_url, timeout=timeout)
 
@@ -144,6 +156,13 @@ def _do_request(
         except (ValueError, TypeError):
             print_error("configuration_error", "Invalid JSON in --data flag.")
             raise typer.Exit(code=1)
+
+    # ``verify=False`` is the curl ``-k`` semantics: skip TLS verification
+    # on every httpx client built downstream. SpaceRouter pops ``verify``
+    # from ``httpx_kwargs`` and threads it through both the long-lived
+    # client and the per-request client used in the paid path, so a
+    # single kwarg here covers both flows.
+    sr_verify = False if insecure else True
 
     # ---- Escrow / SPACE payment mode --------------------------------
     if pay:
@@ -159,6 +178,7 @@ def _do_request(
             pay_key=pay_key,
             escrow_contract=escrow_contract,
             chain_id=chain_id,
+            insecure=insecure,
         )
         return
 
@@ -180,6 +200,7 @@ def _do_request(
         ip_type=ip_type,
         timeout=cfg.timeout,
         follow_redirects=follow_redirects,
+        verify=sr_verify,
     ) as client:
         resp = client.request(method, url, **kwargs)
 
@@ -210,6 +231,7 @@ def _do_paid_request(
     pay_key: str | None,
     escrow_contract: str | None,
     chain_id: int | None,
+    insecure: bool = False,
 ) -> None:
     """Escrow / SPACE-paid request path.
 
@@ -236,6 +258,13 @@ def _do_paid_request(
     cid_raw = chain_id if chain_id is not None else os.environ.get(ENV_CHAIN_ID)
     cid = int(cid_raw) if cid_raw is not None else 102031
 
+    # ``--insecure`` (curl -k) propagates to BOTH the management API
+    # (SpaceRouterSPACE → ``/auth/challenge`` and ``/leg1/*``) AND the
+    # proxy CONNECT path (the throwaway httpx.Client SpaceRouter builds
+    # per paid request). Without that, a self-signed test gateway breaks
+    # on either side and the symptom is mysterious.
+    sr_verify = False if insecure else True
+
     # Gateway management URL is used by SpaceRouterSPACE for /auth/challenge
     # and by ConsumerSettlementClient for /leg1/...; the proxy URL is the
     # CONNECT endpoint and is what SpaceRouter() takes as gateway_url.
@@ -245,6 +274,7 @@ def _do_paid_request(
         private_key=key,
         chain_id=cid,
         escrow_contract=contract,
+        verify=sr_verify,
     )
 
     # Delegate payment-header injection to SpaceRouter(payment=...) — it
@@ -264,6 +294,7 @@ def _do_paid_request(
         follow_redirects=follow_redirects,
         payment=consumer,
         auto_settle=False,  # we run sync_receipts() ourselves to surface the summary
+        verify=sr_verify,
     ) as client:
         resp = client.request(method, url, **kwargs)
 
@@ -316,13 +347,15 @@ def get(
     pay_key: PayKeyOpt = None,
     escrow_contract: EscrowContractOpt = None,
     chain_id: ChainIdOpt = None,
+    insecure: InsecureOpt = False,
 ) -> None:
     """Send a GET request through the residential proxy."""
     _do_request("GET", url, api_key=api_key, gateway_url=gateway_url, header=header,
                 region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects,
                 pay=pay, auto_settle=auto_settle, pay_key=pay_key,
-                escrow_contract=escrow_contract, chain_id=chain_id)
+                escrow_contract=escrow_contract, chain_id=chain_id,
+                insecure=insecure)
 
 
 @app.command()
@@ -343,13 +376,15 @@ def post(
     pay_key: PayKeyOpt = None,
     escrow_contract: EscrowContractOpt = None,
     chain_id: ChainIdOpt = None,
+    insecure: InsecureOpt = False,
 ) -> None:
     """Send a POST request through the residential proxy."""
     _do_request("POST", url, api_key=api_key, gateway_url=gateway_url, header=header,
                 region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects, data=data,
                 pay=pay, auto_settle=auto_settle, pay_key=pay_key,
-                escrow_contract=escrow_contract, chain_id=chain_id)
+                escrow_contract=escrow_contract, chain_id=chain_id,
+                insecure=insecure)
 
 
 @app.command()
@@ -370,13 +405,15 @@ def put(
     pay_key: PayKeyOpt = None,
     escrow_contract: EscrowContractOpt = None,
     chain_id: ChainIdOpt = None,
+    insecure: InsecureOpt = False,
 ) -> None:
     """Send a PUT request through the residential proxy."""
     _do_request("PUT", url, api_key=api_key, gateway_url=gateway_url, header=header,
                 region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects, data=data,
                 pay=pay, auto_settle=auto_settle, pay_key=pay_key,
-                escrow_contract=escrow_contract, chain_id=chain_id)
+                escrow_contract=escrow_contract, chain_id=chain_id,
+                insecure=insecure)
 
 
 @app.command()
@@ -397,13 +434,15 @@ def patch(
     pay_key: PayKeyOpt = None,
     escrow_contract: EscrowContractOpt = None,
     chain_id: ChainIdOpt = None,
+    insecure: InsecureOpt = False,
 ) -> None:
     """Send a PATCH request through the residential proxy."""
     _do_request("PATCH", url, api_key=api_key, gateway_url=gateway_url, header=header,
                 region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects, data=data,
                 pay=pay, auto_settle=auto_settle, pay_key=pay_key,
-                escrow_contract=escrow_contract, chain_id=chain_id)
+                escrow_contract=escrow_contract, chain_id=chain_id,
+                insecure=insecure)
 
 
 @app.command()
@@ -423,13 +462,15 @@ def delete(
     pay_key: PayKeyOpt = None,
     escrow_contract: EscrowContractOpt = None,
     chain_id: ChainIdOpt = None,
+    insecure: InsecureOpt = False,
 ) -> None:
     """Send a DELETE request through the residential proxy."""
     _do_request("DELETE", url, api_key=api_key, gateway_url=gateway_url, header=header,
                 region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects,
                 pay=pay, auto_settle=auto_settle, pay_key=pay_key,
-                escrow_contract=escrow_contract, chain_id=chain_id)
+                escrow_contract=escrow_contract, chain_id=chain_id,
+                insecure=insecure)
 
 
 @app.command()
@@ -449,10 +490,12 @@ def head(
     pay_key: PayKeyOpt = None,
     escrow_contract: EscrowContractOpt = None,
     chain_id: ChainIdOpt = None,
+    insecure: InsecureOpt = False,
 ) -> None:
     """Send a HEAD request through the residential proxy."""
     _do_request("HEAD", url, api_key=api_key, gateway_url=gateway_url, header=header,
                 region=region, ip_type=ip_type, timeout=timeout,
                 output=output, follow_redirects=follow_redirects,
                 pay=pay, auto_settle=auto_settle, pay_key=pay_key,
-                escrow_contract=escrow_contract, chain_id=chain_id)
+                escrow_contract=escrow_contract, chain_id=chain_id,
+                insecure=insecure)

@@ -89,7 +89,14 @@ class EscrowClient:
         return self._token_contract.functions.balanceOf(to_checksum_address(address)).call()
 
     def withdrawal_request(self, address: str) -> tuple[int, int, bool]:
-        """Query pending withdrawal. Returns (amount, unlockAt, exists)."""
+        """Query pending withdrawal. Returns ``(amount, unlockAt, exists)``.
+
+        Use this to inspect a request that is in the locked-but-pending
+        state. Note: ``balance(address)`` does **not** include this
+        amount — the balance is only debited when ``execute_withdrawal``
+        runs after the timelock. See the class docstring for the full
+        three-phase lifecycle.
+        """
         result = self._contract.functions.getWithdrawalRequest(to_checksum_address(address)).call()
         return (result[0], result[1], result[2])
 
@@ -158,15 +165,47 @@ class EscrowClient:
         return self._send_tx(self._contract.functions.deposit(amount), gas=500_000)
 
     def initiate_withdrawal(self, amount: int) -> str:
-        """Start withdrawal with 5-day timelock."""
+        """Phase 1 of 3 — record a withdrawal request with a 5-day timelock.
+
+        This call does **not** move tokens. It only stores
+        ``(amount, unlockAt)`` on-chain so the funds are reserved for
+        the eventual ``execute_withdrawal`` and the timelock can run.
+        Therefore ``balance(address)`` is unchanged after
+        ``initiate_withdrawal`` returns. Query
+        ``withdrawal_request(address)`` to see the locked-but-pending
+        amount.
+
+        Lifecycle:
+            1. ``initiate_withdrawal(amount)`` — record request, no
+               balance change.
+            2. ``execute_withdrawal()`` — after the timelock elapses,
+               actually transfers tokens out and debits ``balance``.
+            3. ``cancel_withdrawal()`` — at any point before step 2,
+               clear the request. Also no balance change because no
+               debit ever happened.
+        """
         if amount <= 0:
             raise ValueError("Amount must be positive")
         return self._send_tx(self._contract.functions.initiateWithdrawal(amount), gas=150_000)
 
     def execute_withdrawal(self) -> str:
-        """Complete pending withdrawal after timelock."""
+        """Phase 2 of 3 — finalise the pending withdrawal after timelock.
+
+        This is the **only** phase that actually moves tokens. The
+        contract transfers the previously-requested amount to the
+        client and debits ``balance(address)`` by the same amount.
+        Reverts if no request exists or the unlock time has not yet
+        passed. See ``initiate_withdrawal`` for the full lifecycle.
+        """
         return self._send_tx(self._contract.functions.executeWithdrawal(), gas=150_000)
 
     def cancel_withdrawal(self) -> str:
-        """Cancel pending withdrawal."""
+        """Phase 3 (alternate) of 3 — clear the pending withdrawal request.
+
+        Removes the on-chain request record. Because
+        ``initiate_withdrawal`` never debited the balance, this call
+        also produces **no balance change** — that is by design, not a
+        bug. ``balance(address)`` was already correct throughout. See
+        ``initiate_withdrawal`` for the three-phase lifecycle.
+        """
         return self._send_tx(self._contract.functions.cancelWithdrawal(), gas=100_000)
