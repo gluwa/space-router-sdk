@@ -23,6 +23,17 @@ export interface SpaceRouterOptions {
   ipType?: IpType;
   /** Request timeout in milliseconds. Default: `30_000` */
   timeout?: number;
+  /**
+   * Set to `false` to skip TLS certificate verification for the gateway
+   * connection. Use only for development against a test gateway with a
+   * self-signed certificate. Default `true`.
+   *
+   * Note: this currently affects the HTTPS gateway path only. The SOCKS5
+   * path does not propagate this option — set
+   * `NODE_TLS_REJECT_UNAUTHORIZED=0` in the environment if you need to
+   * disable verification for SOCKS5 against a self-signed gateway.
+   */
+  verify?: boolean;
 }
 
 /** Options for the {@link SpaceRouterAdmin} constructor. */

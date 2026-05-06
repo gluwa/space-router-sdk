@@ -63,6 +63,7 @@ function buildAgent(
   protocol: "http" | "socks5",
   region?: string,
   ipType?: IpType,
+  verify: boolean = true,
 ): CapturingProxyAgent | SocksProxyAgent {
   const parsed = new URL(gatewayUrl);
   const host = parsed.hostname || "localhost";
@@ -71,6 +72,11 @@ function buildAgent(
   if (protocol === "socks5") {
     const port = parsed.port || "1080";
     const socksUrl = `socks5://${apiKey}:@${host}:${port}`;
+    // socks-proxy-agent's TLS verification for the inner request is
+    // controlled by Node's https module / `NODE_TLS_REJECT_UNAUTHORIZED`,
+    // not a constructor option that propagates cleanly here. Document the
+    // workaround in models.ts/README; do not try to wire `verify` into
+    // SOCKS5 — it would be a no-op and misleading.
     return new SocksProxyAgent(socksUrl);
   }
 
@@ -87,11 +93,23 @@ function buildAgent(
   if (region) proxyHeaders["X-SpaceRouter-Region"] = region;
   if (ipType) proxyHeaders["X-SpaceRouter-IP-Type"] = ipType;
 
+  // `verify: false` toggles TLS cert verification for both the gateway
+  // (proxyTls) and the inner CONNECT-tunnelled request (requestTls).
+  // The reported repro was SELF_SIGNED_CERT_IN_CHAIN on the gateway hop,
+  // but disabling only proxyTls leaves the inner TLS context strict and
+  // can re-trigger the same failure mode for self-signed inner targets
+  // (e.g. when the test gateway speaks TLS twice).
+  const tlsOpts = verify ? undefined : { rejectUnauthorized: false };
+
   // CapturingProxyAgent extends ProxyAgent and snapshots the CONNECT
   // response headers (X-SpaceRouter-Node etc.) so they survive the hop
   // through undici's fetch — ProxyResponse reads them back via the
   // `metadata` argument set by the request layer below.
-  return new CapturingProxyAgent({ uri: proxyUrl, headers: proxyHeaders });
+  return new CapturingProxyAgent({
+    uri: proxyUrl,
+    headers: proxyHeaders,
+    ...(tlsOpts ? { proxyTls: tlsOpts, requestTls: tlsOpts } : {}),
+  });
 }
 
 /** Check for proxy-layer errors and throw typed exceptions. */
@@ -193,6 +211,7 @@ export class SpaceRouter {
   private readonly _region: string | undefined;
   private readonly _ipType: IpType | undefined;
   private readonly _timeout: number;
+  private readonly _verify: boolean;
   private readonly _agent: CapturingProxyAgent | SocksProxyAgent;
   private readonly _payment: SpaceRouterSPACE | undefined;
   private readonly _autoSettle: boolean;
@@ -205,7 +224,15 @@ export class SpaceRouter {
     this._ipType = options?.ipType;
     if (this._region) validateRegion(this._region);
     this._timeout = options?.timeout ?? DEFAULT_TIMEOUT;
-    this._agent = buildAgent(apiKey, this._gatewayUrl, this._protocol, this._region, this._ipType);
+    this._verify = options?.verify ?? true;
+    this._agent = buildAgent(
+      apiKey,
+      this._gatewayUrl,
+      this._protocol,
+      this._region,
+      this._ipType,
+      this._verify,
+    );
     this._payment = options?.payment;
     this._autoSettle = options?.autoSettle ?? false;
   }
@@ -250,9 +277,13 @@ export class SpaceRouter {
       };
       if (this._region) connectHeaders["X-SpaceRouter-Region"] = this._region;
       if (this._ipType) connectHeaders["X-SpaceRouter-IP-Type"] = this._ipType;
+      const tlsOpts = this._verify
+        ? undefined
+        : { rejectUnauthorized: false };
       dispatcher = new CapturingProxyAgent({
         uri: proxyUrl,
         headers: connectHeaders,
+        ...(tlsOpts ? { proxyTls: tlsOpts, requestTls: tlsOpts } : {}),
       });
     }
 
@@ -370,6 +401,7 @@ export class SpaceRouter {
       region: options.region,
       ipType: options.ipType,
       timeout: this._timeout,
+      verify: this._verify,
       payment: this._payment,
       autoSettle: this._autoSettle,
     });

@@ -44,6 +44,32 @@ const krClient = new SpaceRouter("sr_live_xxx", {
 const jpClient = client.withRouting({ region: "JP" });
 ```
 
+## Self-signed certificates / dev environments
+
+When developing against a test gateway with a self-signed TLS certificate
+(`SELF_SIGNED_CERT_IN_CHAIN`), pass `verify: false`:
+
+```ts
+const client = new SpaceRouter("sr_test_xxx", {
+  gatewayUrl: "https://gateway.test.spacerouter.org",
+  verify: false, // dev only — skips TLS cert verification
+});
+```
+
+> Set to `false` to skip TLS certificate verification for the gateway
+> connection. Use only for development against a test gateway with a
+> self-signed certificate. Default `true`.
+
+If you're running the SDK behind a wrapper that doesn't expose this
+option, set the environment variable instead:
+
+```bash
+NODE_TLS_REJECT_UNAUTHORIZED=0 node my-app.js
+```
+
+The `verify` option currently applies to the HTTPS gateway path only.
+SOCKS5 users on a self-signed gateway should use the env-var fallback.
+
 ## SOCKS5 Proxy
 
 ```ts
@@ -114,3 +140,4 @@ Note: HTTP errors from the target website (e.g. 404, 500) are **not** thrown as 
 | `protocol`  | `"http"`                   | `"http"` or `"socks5"`                   |
 | `region`    | `undefined`                | 2-letter country code (ISO 3166-1 alpha-2) |
 | `timeout`   | `30000`                    | Request timeout in milliseconds          |
+| `verify`    | `true`                     | TLS cert verification for gateway connection (HTTPS path) |
