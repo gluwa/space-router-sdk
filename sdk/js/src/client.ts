@@ -3,6 +3,33 @@
  *
  * Routes HTTP requests through the Space Router residential proxy network
  * via HTTP or SOCKS5.
+ *
+ * --- CONNECT-time error mapping (the 5-cycle history) -----------------------
+ *
+ * When the proxy CONNECT response is non-200 (e.g. 407 bad API key, 503 no
+ * nodes), undici's `proxy-agent.js` throws a `RequestAbortedError` BEFORE
+ * fetch can return a Response. The user-facing error is a bare
+ * `TypeError("fetch failed")` with the real proxy-status info buried in the
+ * `.cause` chain.
+ *
+ * Critically, undici interposes a `DOMException("Request was cancelled.")`
+ * between the top-level `TypeError` and the `RequestAbortedError`, so the
+ * real chain in production is THREE deep:
+ *
+ *   [L0] TypeError: fetch failed
+ *   [L1] DOMException: Request was cancelled.
+ *   [L2] RequestAbortedError: Proxy response (407) !== 200 when HTTP Tunneling
+ *
+ * rc.6 added a 407 mapping that only inspected L1. rc.8 added a 503 mapping
+ * that also only inspected L1. Neither shipped fix matched in production
+ * because the proxy-status string lives at L2. Unit tests passed because
+ * they mocked the cause chain at L1 directly. Cycles 6, 7, and 8 all left
+ * users seeing bare `TypeError: fetch failed` for every CONNECT-time error.
+ *
+ * rc.9 walks up to 5 levels of `.cause` so any future undici reshuffling
+ * still resolves the proxy-status info. Tests use a real local CONNECT
+ * server (not a mocked TypeError) so a future regression of the cause-chain
+ * shape gets caught automatically.
  */
 
 import { SocksProxyAgent } from "socks-proxy-agent";
@@ -110,6 +137,29 @@ function buildAgent(
     headers: proxyHeaders,
     ...(tlsOpts ? { proxyTls: tlsOpts, requestTls: tlsOpts } : {}),
   });
+}
+
+/**
+ * Walk up to 5 levels of `.cause` looking for an error whose `.message`
+ * matches the given predicate. Returns true on first hit.
+ *
+ * Why 5 levels: undici's CONNECT-time errors are typically 3 deep
+ * (TypeError → DOMException → RequestAbortedError). 5 gives headroom in
+ * case a future undici release adds another wrapper, without devolving
+ * into an unbounded walk on a circular `.cause` (which we've never seen
+ * but cheap to guard against).
+ */
+function findInCauseChain(
+  err: unknown,
+  predicate: (msg: string) => boolean,
+): boolean {
+  let cur: unknown = err;
+  for (let depth = 0; depth < 5 && cur; depth++) {
+    const msg = (cur as { message?: unknown }).message;
+    if (typeof msg === "string" && predicate(msg)) return true;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /** Check for proxy-layer errors and throw typed exceptions. */
@@ -344,24 +394,38 @@ export class SpaceRouter {
     } catch (err) {
       if (err instanceof SpaceRouterError) throw err;
 
-      // undici converts a 407 during HTTPS CONNECT tunnel setup into a
-      // TypeError("fetch failed") instead of returning a Response object.
-      // Detect this and surface the proper AuthenticationError.
+      // undici converts a non-200 proxy CONNECT response into a
+      // TypeError("fetch failed") instead of returning a Response. The real
+      // proxy-status info lives DEEPER in the cause chain than a single
+      // `.cause` lookup — see the file-top comment for the 5-cycle history
+      // and chain shape. Walk up to 5 levels.
       if (err instanceof TypeError && err.message === "fetch failed") {
-        const cause = (err as { cause?: Error }).cause;
-        if (cause?.message?.toLowerCase().includes("proxy authentication required")) {
+        // 407 — proxy auth failed during CONNECT (rc.6 origin, fixed for real in rc.9)
+        if (
+          findInCauseChain(
+            err,
+            (m) =>
+              m.toLowerCase().includes("proxy authentication required") ||
+              m.includes("Proxy response (407)"),
+          )
+        ) {
           throw new AuthenticationError("Invalid or missing API key", {
             statusCode: 407,
           });
         }
-        // Same pattern for CONNECT-time 503: undici's proxy-agent throws
-        // RequestAbortedError("Proxy response (503) !== 200 when HTTP Tunneling")
-        // before fetch can return a Response, so the response.status === 503
-        // branch above never sees it. Map it to NoNodesAvailableError here.
-        if (cause?.message?.includes("Proxy response (503)")) {
-          throw new NoNodesAvailableError("No residential nodes currently available", {
-            statusCode: 503,
-          });
+        // 503 — gateway has no nodes matching the request (rc.8 origin, fixed for real in rc.9)
+        if (
+          findInCauseChain(
+            err,
+            (m) =>
+              m.includes("Proxy response (503)") ||
+              m.toLowerCase().includes("service unavailable"),
+          )
+        ) {
+          throw new NoNodesAvailableError(
+            "No residential nodes currently available",
+            { statusCode: 503 },
+          );
         }
       }
       throw err;
