@@ -180,6 +180,30 @@ describe("proxy error checking", () => {
     client.close();
   });
 
+  it("503 during HTTPS CONNECT throws NoNodesAvailableError", async () => {
+    // undici's proxy-agent.js throws RequestAbortedError when the proxy
+    // CONNECT response is non-200; fetch wraps it as TypeError("fetch failed").
+    // This bypasses the response.status === 503 branch since fetch never
+    // returns a Response.
+    const cause = new Error("Proxy response (503) !== 200 when HTTP Tunneling");
+    fetchSpy.mockRejectedValue(
+      new TypeError("fetch failed", { cause }),
+    );
+
+    const client = new SpaceRouter("sr_live_xxx");
+    await expect(client.get("https://example.com")).rejects.toThrow(
+      NoNodesAvailableError,
+    );
+
+    try {
+      await client.get("https://example.com");
+    } catch (e) {
+      expect(e).toBeInstanceOf(NoNodesAvailableError);
+      expect((e as NoNodesAvailableError).statusCode).toBe(503);
+    }
+    client.close();
+  });
+
   it("429 throws RateLimitError with retryAfter", async () => {
     fetchSpy.mockResolvedValue(
       makeResponse(429, {
