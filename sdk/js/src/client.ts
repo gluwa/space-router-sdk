@@ -354,6 +354,15 @@ export class SpaceRouter {
             statusCode: 407,
           });
         }
+        // Same pattern for CONNECT-time 503: undici's proxy-agent throws
+        // RequestAbortedError("Proxy response (503) !== 200 when HTTP Tunneling")
+        // before fetch can return a Response, so the response.status === 503
+        // branch above never sees it. Map it to NoNodesAvailableError here.
+        if (cause?.message?.includes("Proxy response (503)")) {
+          throw new NoNodesAvailableError("No residential nodes currently available", {
+            statusCode: 503,
+          });
+        }
       }
       throw err;
     } finally {
