@@ -105,11 +105,23 @@ ClientFilterOpt = Annotated[
         ),
     ),
 ]
+InsecureOpt = Annotated[
+    bool,
+    typer.Option(
+        "--insecure", "-k",
+        help=(
+            "Skip TLS verification on the gateway management API. "
+            "Use only for local/test gateways with self-signed certs — "
+            "never against production."
+        ),
+    ),
+]
 
 
 def _resolve_settlement(
     gateway_url: Optional[str],
     private_key: Optional[str],
+    insecure: bool = False,
 ) -> ConsumerSettlementClient:
     gw = gateway_url or os.environ.get(ENV_GATEWAY_MANAGEMENT_URL) \
         or DEFAULT_GATEWAY_MANAGEMENT_URL
@@ -118,7 +130,9 @@ def _resolve_settlement(
         raise typer.BadParameter(
             "Missing private key. Pass --key or set SR_ESCROW_PRIVATE_KEY.",
         )
-    return ConsumerSettlementClient(gateway_url=gw, private_key=key)
+    return ConsumerSettlementClient(
+        gateway_url=gw, private_key=key, verify=not insecure,
+    )
 
 
 def _normalise_receipts(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -206,9 +220,10 @@ def pending(
     gateway: GatewayMgmtOpt = None,
     key: PrivateKeyOpt = None,
     json_output: JsonOpt = False,
+    insecure: InsecureOpt = False,
 ) -> None:
     """List unsigned Leg 1 receipts the Gateway is holding for this consumer."""
-    settler = _resolve_settlement(gateway, key)
+    settler = _resolve_settlement(gateway, key, insecure=insecure)
     payload = asyncio.run(settler.fetch_pending(limit=limit))
     receipts = _normalise_receipts(payload)
     if json_output:
@@ -230,9 +245,10 @@ def list_cmd(
     json_output: JsonOpt = False,
     gateway: GatewayMgmtOpt = None,
     key: PrivateKeyOpt = None,
+    insecure: InsecureOpt = False,
 ) -> None:
     """List pending Leg 1 receipts grouped by ``tunnel_request_id``."""
-    settler = _resolve_settlement(gateway, key)
+    settler = _resolve_settlement(gateway, key, insecure=insecure)
     payload = asyncio.run(settler.fetch_pending(limit=limit))
     receipts = _normalise_receipts(payload)
 
@@ -295,9 +311,10 @@ def sync(
     key: PrivateKeyOpt = None,
     json_output: JsonOpt = False,
     watch: WatchOpt = None,
+    insecure: InsecureOpt = False,
 ) -> None:
     """Sign every pending Leg 1 receipt and submit signatures to the broker."""
-    settler = _resolve_settlement(gateway, key)
+    settler = _resolve_settlement(gateway, key, insecure=insecure)
 
     if watch is None:
         result = asyncio.run(settler.sync_receipts(limit=limit))
