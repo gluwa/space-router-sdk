@@ -292,6 +292,67 @@ class TestReceiptsList:
             assert "Tunnel tun-0" in result.output
 
 
+# ── --insecure plumbing ────────────────────────────────────────────
+
+
+class TestReceiptsInsecure:
+    """``--insecure``/``-k`` must thread ``verify=False`` to the client."""
+
+    def _patch_and_run(self, runner, argv: list[str]):
+        with patch(
+            "spacerouter_cli.commands.receipts.ConsumerSettlementClient"
+        ) as cls:
+            inst = MagicMock()
+            inst.address = WALLET_ADDR
+            async def _fake_fetch(limit=50):
+                return _pending_payload(0)
+            async def _fake_sync(limit=50):
+                return {"accepted": [], "rejected": [], "pending_count": 0}
+            inst.fetch_pending = _fake_fetch
+            inst.sync_receipts = _fake_sync
+            cls.return_value = inst
+
+            result = runner.invoke(app, argv)
+            return result, cls
+
+    def test_pending_insecure_passes_verify_false(self, runner, settle_env):
+        result, cls = self._patch_and_run(
+            runner, ["receipts", "pending", "--insecure", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        kwargs = cls.call_args.kwargs
+        assert kwargs.get("verify") is False
+
+    def test_pending_short_flag_dash_k(self, runner, settle_env):
+        result, cls = self._patch_and_run(
+            runner, ["receipts", "pending", "-k", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert cls.call_args.kwargs.get("verify") is False
+
+    def test_pending_default_verify_true(self, runner, settle_env):
+        result, cls = self._patch_and_run(
+            runner, ["receipts", "pending", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        # Default must be verify=True (no flag = secure).
+        assert cls.call_args.kwargs.get("verify") is True
+
+    def test_list_insecure_passes_verify_false(self, runner, settle_env):
+        result, cls = self._patch_and_run(
+            runner, ["receipts", "list", "--insecure", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert cls.call_args.kwargs.get("verify") is False
+
+    def test_sync_insecure_passes_verify_false(self, runner, settle_env):
+        result, cls = self._patch_and_run(
+            runner, ["receipts", "sync", "--insecure", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert cls.call_args.kwargs.get("verify") is False
+
+
 # ── existing on-chain commands still work ──────────────────────────
 
 
