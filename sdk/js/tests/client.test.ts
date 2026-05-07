@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   SpaceRouter,
   ProxyResponse,
@@ -159,11 +161,37 @@ describe("proxy error checking", () => {
     client.close();
   });
 
-  it("407 during HTTPS CONNECT throws AuthenticationError", async () => {
-    // undici converts a 407 during tunnel setup into TypeError("fetch failed")
-    const cause = new Error("proxy authentication required");
+  // --- CONNECT-time error mapping (mocked) -----------------------------------
+  //
+  // These tests cover the cause-chain walker without spinning up a real
+  // server. The realistic 3-deep chain (matches what production undici emits
+  // and what we validated against the test gateway) is the primary case;
+  // the 1-deep chain is a defensive test in case future undici versions stop
+  // wrapping in DOMException.
+  //
+  // The live-undici tests further down validate the real chain shape so a
+  // future regression is caught automatically.
+
+  function build3LevelChain(innerMessage: string): TypeError {
+    // Real undici production chain (rc.9 confirmed):
+    //   TypeError("fetch failed")
+    //     .cause = DOMException("Request was cancelled.")
+    //       .cause = RequestAbortedError("Proxy response (4xx/5xx) ...")
+    const inner = new Error(innerMessage);
+    inner.name = "RequestAbortedError";
+    const middle = new Error("Request was cancelled.") as Error & {
+      cause?: unknown;
+    };
+    middle.name = "DOMException";
+    middle.cause = inner;
+    return new TypeError("fetch failed", { cause: middle });
+  }
+
+  it("407 during HTTPS CONNECT (3-deep cause chain) throws AuthenticationError", async () => {
+    // Reproduces the real production chain that previously slipped past
+    // rc.6's L1-only check.
     fetchSpy.mockRejectedValue(
-      new TypeError("fetch failed", { cause }),
+      build3LevelChain("Proxy response (407) !== 200 when HTTP Tunneling"),
     );
 
     const client = new SpaceRouter("sr_live_bad_key");
@@ -180,14 +208,11 @@ describe("proxy error checking", () => {
     client.close();
   });
 
-  it("503 during HTTPS CONNECT throws NoNodesAvailableError", async () => {
-    // undici's proxy-agent.js throws RequestAbortedError when the proxy
-    // CONNECT response is non-200; fetch wraps it as TypeError("fetch failed").
-    // This bypasses the response.status === 503 branch since fetch never
-    // returns a Response.
-    const cause = new Error("Proxy response (503) !== 200 when HTTP Tunneling");
+  it("503 during HTTPS CONNECT (3-deep cause chain) throws NoNodesAvailableError", async () => {
+    // Reproduces the real production chain that previously slipped past
+    // rc.8's L1-only check.
     fetchSpy.mockRejectedValue(
-      new TypeError("fetch failed", { cause }),
+      build3LevelChain("Proxy response (503) !== 200 when HTTP Tunneling"),
     );
 
     const client = new SpaceRouter("sr_live_xxx");
@@ -201,6 +226,30 @@ describe("proxy error checking", () => {
       expect(e).toBeInstanceOf(NoNodesAvailableError);
       expect((e as NoNodesAvailableError).statusCode).toBe(503);
     }
+    client.close();
+  });
+
+  it("407 during HTTPS CONNECT (1-deep cause, defensive) still maps", async () => {
+    // Defensive — if undici drops the DOMException wrapper in a future
+    // release, the walker should still match at L1.
+    const cause = new Error("proxy authentication required");
+    fetchSpy.mockRejectedValue(new TypeError("fetch failed", { cause }));
+
+    const client = new SpaceRouter("sr_live_bad_key");
+    await expect(client.get("https://example.com")).rejects.toThrow(
+      AuthenticationError,
+    );
+    client.close();
+  });
+
+  it("503 during HTTPS CONNECT (1-deep cause, defensive) still maps", async () => {
+    const cause = new Error("Proxy response (503) !== 200 when HTTP Tunneling");
+    fetchSpy.mockRejectedValue(new TypeError("fetch failed", { cause }));
+
+    const client = new SpaceRouter("sr_live_xxx");
+    await expect(client.get("https://example.com")).rejects.toThrow(
+      NoNodesAvailableError,
+    );
     client.close();
   });
 
@@ -502,4 +551,90 @@ describe("SpaceRouter", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// CONNECT-time error mapping — LIVE undici against a local CONNECT server
+// ---------------------------------------------------------------------------
+//
+// These tests do NOT mock fetch. They spin up a tiny local HTTP proxy that
+// answers `CONNECT` with a real non-200 status, so undici produces the real
+// cause chain. This is the only kind of test that would have caught the
+// 5-cycle bug — a mocked TypeError with a hand-built single-level cause
+// (as the previous tests had it) doesn't reproduce the production chain
+// shape and silently lets the L1-only check pass.
+//
+// If any future undici release changes the cause-chain depth or wrapper
+// shape, these tests will fail loudly here without us having to re-discover
+// the bug in production.
 
+describe("CONNECT-time error mapping (live undici)", () => {
+  beforeEach(() => {
+    // Earlier `describe` blocks stub `globalThis.fetch` via vi.stubGlobal.
+    // `vi.restoreAllMocks()` does NOT undo that — only `vi.unstubAllGlobals`
+    // does. Without this, the live tests would call the leftover spy and
+    // never exercise undici. Belt and braces.
+    vi.unstubAllGlobals();
+  });
+
+  function startProxy(status: number, reason: string): Promise<{
+    port: number;
+    close: () => Promise<void>;
+  }> {
+    return new Promise((resolve) => {
+      const server = http.createServer();
+      server.on("connect", (_req, socket) => {
+        socket.write(`HTTP/1.1 ${status} ${reason}\r\n\r\n`);
+        socket.end();
+      });
+      // Suppress noisy 'clientError' from undici tearing down the socket.
+      server.on("clientError", () => {});
+      server.listen(0, "127.0.0.1", () => {
+        const port = (server.address() as AddressInfo).port;
+        resolve({
+          port,
+          close: () =>
+            new Promise<void>((r) => server.close(() => r())),
+        });
+      });
+    });
+  }
+
+  it("407 CONNECT → AuthenticationError (real undici cause chain)", async () => {
+    const proxy = await startProxy(407, "Proxy Authentication Required");
+    try {
+      const client = new SpaceRouter("sr_live_bad_key", {
+        gatewayUrl: `http://127.0.0.1:${proxy.port}`,
+      });
+      let caught: unknown;
+      try {
+        await client.get("https://httpbin.org/ip");
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(AuthenticationError);
+      expect((caught as AuthenticationError).statusCode).toBe(407);
+      client.close();
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("503 CONNECT → NoNodesAvailableError (real undici cause chain)", async () => {
+    const proxy = await startProxy(503, "Service Unavailable");
+    try {
+      const client = new SpaceRouter("sr_live_xxx", {
+        gatewayUrl: `http://127.0.0.1:${proxy.port}`,
+      });
+      let caught: unknown;
+      try {
+        await client.get("https://httpbin.org/ip");
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(NoNodesAvailableError);
+      expect((caught as NoNodesAvailableError).statusCode).toBe(503);
+      client.close();
+    } finally {
+      await proxy.close();
+    }
+  });
+});
