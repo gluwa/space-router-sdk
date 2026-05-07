@@ -31,7 +31,7 @@ the SDK.
 ```bash
 # Testnet defaults — see internal-docs/v1.5-consumer-protocol.md §1.
 export SR_GATEWAY_URL="https://your-gateway.example.com"
-export SR_GATEWAY_MANAGEMENT_URL="https://your-gateway.example.com"
+export SR_GATEWAY_MANAGEMENT_URL="https://your-gateway.example.com:8081"
 export SR_ESCROW_CHAIN_RPC="https://rpc.cc3-testnet.creditcoin.network"
 export SR_ESCROW_CONTRACT_ADDRESS="0xC5740e4e9175301a24FB6d22bA184b8ec0762852"
 export SR_ESCROW_CHAIN_ID="102031"
@@ -39,6 +39,22 @@ export SR_ESCROW_CHAIN_ID="102031"
 # Wallet — generate or import. Never commit this.
 export SR_ESCROW_PRIVATE_KEY="0x..."
 ```
+
+> **`SR_GATEWAY_URL` vs `SR_GATEWAY_MANAGEMENT_URL`.** These point at
+> two different listeners on the *same* gateway host:
+>
+> * `SR_GATEWAY_URL` (the SDK's `proxy_url`) is the **proxy** endpoint
+>   — typically port 443 or 8080. It only handles `CONNECT` for your
+>   tunnelled application traffic.
+> * `SR_GATEWAY_MANAGEMENT_URL` (the SDK's `gateway_url` /
+>   `management_url`) is the **management API** endpoint — typically
+>   port 8081. It serves `/auth/challenge` and `/leg1/...`.
+>
+> Sending management requests (e.g. `GET /auth/challenge`) to the
+> proxy port returns **HTTP 407** because the proxy listener only
+> answers `CONNECT`. If your gateway exposes both on the same port
+> (some single-port deployments do), point both vars at that URL —
+> otherwise keep them split.
 
 ### 2. Fund a testnet wallet
 
@@ -118,14 +134,15 @@ import asyncio
 from spacerouter import SpaceRouter
 from spacerouter.payment import SpaceRouterSPACE
 
-PROXY = "https://your-gateway.example.com"
-GATEWAY_MGMT = PROXY  # same host, separate routes
+# Two URLs, two purposes — see the env-var note above.
+PROXY = "https://your-gateway.example.com"            # CONNECT listener, :443/:8080
+GATEWAY_MGMT = "https://your-gateway.example.com:8081"  # /auth/challenge + /leg1/*
 ESCROW = "0xC5740e4e9175301a24FB6d22bA184b8ec0762852"
 
 async def main(private_key: str):
     consumer = SpaceRouterSPACE(
-        gateway_url=GATEWAY_MGMT,
-        proxy_url=PROXY,
+        gateway_url=GATEWAY_MGMT,    # management API (port 8081)
+        proxy_url=PROXY,             # proxy CONNECT (port 443/8080)
         private_key=private_key,
         chain_id=102031,
         escrow_contract=ESCROW,
@@ -142,6 +159,10 @@ async def main(private_key: str):
 
 asyncio.run(main("0x..."))
 ```
+
+> If `request_challenge()` raises with HTTP 407, you probably swapped
+> `gateway_url` and `proxy_url` — see the troubleshooting section in
+> [`docs/consumer-quickstart.md`](docs/consumer-quickstart.md).
 
 The `SpaceRouterSPACE` client validates received receipts against your
 local byte count, signs only after validation
