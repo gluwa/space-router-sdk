@@ -21,6 +21,7 @@ from spacerouter.exceptions import (
     QuotaExceededError,
     RateLimitError,
     SettlementRejected,
+    SpaceRouterError,
     UpstreamError,
 )
 from spacerouter.models import ProxyResponse
@@ -136,6 +137,43 @@ def _build_proxy(
         proxy_headers["X-SpaceRouter-IP-Type"] = ip_type
 
     return httpx.Proxy(proxy_url, headers=proxy_headers)
+
+
+def _translate_proxy_error(exc: httpx.ProxyError) -> SpaceRouterError:
+    """Translate an ``httpx.ProxyError`` raised during CONNECT into a typed SDK error.
+
+    Mirrors the JS rc.9 J-06 fix on the Python side. The Response-path
+    branch in :func:`_check_proxy_errors` only fires when httpx returns a
+    Response object. CONNECT-tunnel failures (407 returned during tunnel
+    setup, 503 returned because the gateway has no nodes — both happen
+    BEFORE any Response object exists) raise ``httpx.ProxyError``
+    directly and bypass that check entirely. Pre-rc.10 the raw
+    ``httpx.ProxyError`` leaked to consumers, breaking the typed-error
+    contract that the rc.6 (407) and rc.8 (503) Response-path mappings
+    were meant to provide.
+
+    The status code is recoverable from ``str(exc)`` because httpx
+    formats the CONNECT failure as e.g.
+    ``"Unexpected HTTP status code: 407"`` or
+    ``"Tunnel connection failed: 503 Service Unavailable"``. Match on
+    both the numeric code and the status reason text so a future httpx
+    version that changes the wording on either side still maps.
+    """
+    msg = str(exc)
+    msg_lower = msg.lower()
+    # CONNECT-time 407 — rc.6 Response-path mapping target, never worked
+    # from the SDK directly because httpx never produced a Response.
+    if "407" in msg or "proxy authentication" in msg_lower:
+        return AuthenticationError("Invalid or missing API key", status_code=407)
+    # CONNECT-time 503 — rc.8 #J1 Response-path mapping target, same gap.
+    if "503" in msg or "service unavailable" in msg_lower:
+        return NoNodesAvailableError(
+            "No residential nodes currently available", status_code=503,
+        )
+    # Anything else (502, network errors, etc.) — wrap so consumers can
+    # still catch via the single SpaceRouterError base class instead of
+    # importing httpx symbols.
+    return SpaceRouterError(f"Proxy error: {msg}")
 
 
 def _check_proxy_errors(response: httpx.Response) -> None:
@@ -261,30 +299,40 @@ class SpaceRouter:
         ``strict_settlement=True``, :class:`SettlementRejected`
         propagates.
         """
-        if self._payment is not None:
-            challenge = _run_async(self._payment.request_challenge())
-            payment_headers = self._payment.build_auth_headers(challenge)
-            # Rebuild the proxy with payment headers stamped onto CONNECT.
-            # Fresh challenges are single-use, so a per-request client is
-            # the simplest correct shape; httpx.Client construction is
-            # cheap (no connect happens until .request() is called).
-            proxy = _build_proxy(
-                self._api_key, self._gateway_url, self._protocol,
-                self._region, self._ip_type,
-            )
-            if isinstance(proxy, httpx.Proxy):
-                merged_headers = _merge_payment_headers(
-                    proxy.headers, payment_headers,
+        try:
+            if self._payment is not None:
+                challenge = _run_async(self._payment.request_challenge())
+                payment_headers = self._payment.build_auth_headers(challenge)
+                # Rebuild the proxy with payment headers stamped onto CONNECT.
+                # Fresh challenges are single-use, so a per-request client is
+                # the simplest correct shape; httpx.Client construction is
+                # cheap (no connect happens until .request() is called).
+                proxy = _build_proxy(
+                    self._api_key, self._gateway_url, self._protocol,
+                    self._region, self._ip_type,
                 )
-                proxy = httpx.Proxy(str(proxy.url), headers=merged_headers)
-            with httpx.Client(
-                proxy=proxy, timeout=self._timeout, verify=self._verify,
-                **self._httpx_kwargs,
-            ) as paid_client:
-                response = paid_client.request(method, url, **kwargs)
-        else:
-            response = self._client.request(method, url, **kwargs)
-        _check_proxy_errors(response)
+                if isinstance(proxy, httpx.Proxy):
+                    merged_headers = _merge_payment_headers(
+                        proxy.headers, payment_headers,
+                    )
+                    proxy = httpx.Proxy(str(proxy.url), headers=merged_headers)
+                with httpx.Client(
+                    proxy=proxy, timeout=self._timeout, verify=self._verify,
+                    **self._httpx_kwargs,
+                ) as paid_client:
+                    response = paid_client.request(method, url, **kwargs)
+            else:
+                response = self._client.request(method, url, **kwargs)
+            _check_proxy_errors(response)
+        except httpx.ProxyError as e:
+            # CONNECT-tunnel failures bypass _check_proxy_errors entirely:
+            # that helper only fires when httpx returns a Response object,
+            # and a non-200 CONNECT response (407 bad key, 503 no nodes)
+            # raises before any Response exists. Translate to typed SDK
+            # errors here so consumers don't see a raw httpx.ProxyError —
+            # same architectural class of bug the JS SDK shipped through
+            # rc.6→rc.8 (see _translate_proxy_error docstring).
+            raise _translate_proxy_error(e) from e
         proxy_resp = ProxyResponse(response)
 
         if self._payment is not None and self._auto_settle:
@@ -350,13 +398,36 @@ class SpaceRouter:
     # -- Lifecycle ----------------------------------------------------------
 
     def close(self) -> None:
-        self._client.close()
+        client = getattr(self, "_client", None)
+        if client is not None:
+            client.close()
 
     def __enter__(self) -> SpaceRouter:
         return self
 
     def __exit__(self, *args: Any) -> None:
         self.close()
+
+    async def aclose(self) -> None:
+        """Close the underlying httpx.Client. Safe to call multiple times.
+
+        ``SpaceRouter`` wraps a synchronous ``httpx.Client``, but consumers
+        in async codebases reasonably expect ``aclose()`` /
+        ``async with`` to work — pre-rc.10 the bare class raised
+        ``TypeError: ... does not support the asynchronous context
+        manager protocol`` because no ``__aenter__`` was defined.
+        ``httpx.Client.close()`` is non-blocking (no I/O), so calling
+        it from async code is safe.
+        """
+        client = getattr(self, "_client", None)
+        if client is not None:
+            client.close()
+
+    async def __aenter__(self) -> SpaceRouter:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        await self.aclose()
 
     def __repr__(self) -> str:
         return (
@@ -423,26 +494,35 @@ class AsyncSpaceRouter:
         construct a throwaway ``httpx.AsyncClient`` for that single
         request.
         """
-        if self._payment is not None:
-            challenge = await self._payment.request_challenge()
-            payment_headers = self._payment.build_auth_headers(challenge)
-            proxy = _build_proxy(
-                self._api_key, self._gateway_url, self._protocol,
-                self._region, self._ip_type,
-            )
-            if isinstance(proxy, httpx.Proxy):
-                merged_headers = _merge_payment_headers(
-                    proxy.headers, payment_headers,
+        try:
+            if self._payment is not None:
+                challenge = await self._payment.request_challenge()
+                payment_headers = self._payment.build_auth_headers(challenge)
+                proxy = _build_proxy(
+                    self._api_key, self._gateway_url, self._protocol,
+                    self._region, self._ip_type,
                 )
-                proxy = httpx.Proxy(str(proxy.url), headers=merged_headers)
-            async with httpx.AsyncClient(
-                proxy=proxy, timeout=self._timeout, verify=self._verify,
-                **self._httpx_kwargs,
-            ) as paid_client:
-                response = await paid_client.request(method, url, **kwargs)
-        else:
-            response = await self._client.request(method, url, **kwargs)
-        _check_proxy_errors(response)
+                if isinstance(proxy, httpx.Proxy):
+                    merged_headers = _merge_payment_headers(
+                        proxy.headers, payment_headers,
+                    )
+                    proxy = httpx.Proxy(str(proxy.url), headers=merged_headers)
+                async with httpx.AsyncClient(
+                    proxy=proxy, timeout=self._timeout, verify=self._verify,
+                    **self._httpx_kwargs,
+                ) as paid_client:
+                    response = await paid_client.request(method, url, **kwargs)
+            else:
+                response = await self._client.request(method, url, **kwargs)
+            _check_proxy_errors(response)
+        except httpx.ProxyError as e:
+            # See sync SpaceRouter.request and _translate_proxy_error: the
+            # Response-path _check_proxy_errors branch only fires when
+            # httpx returns a Response object. CONNECT-tunnel failures
+            # (407/503 returned during tunnel setup) raise httpx.ProxyError
+            # before any Response exists, so we translate here to typed
+            # SDK errors. Pre-rc.10 they leaked as raw httpx.ProxyError.
+            raise _translate_proxy_error(e) from e
         proxy_resp = ProxyResponse(response)
 
         if self._payment is not None and self._auto_settle:
@@ -507,7 +587,10 @@ class AsyncSpaceRouter:
     # -- Lifecycle ----------------------------------------------------------
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        """Close the underlying httpx.AsyncClient. Safe to call multiple times."""
+        client = getattr(self, "_client", None)
+        if client is not None:
+            await client.aclose()
 
     async def __aenter__(self) -> AsyncSpaceRouter:
         return self
