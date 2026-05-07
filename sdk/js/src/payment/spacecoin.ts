@@ -22,9 +22,31 @@ import { ConsumerSettlementClient } from "./consumerSettlement.js";
 import { fetch as undiciFetch } from "undici";
 
 export interface SpaceRouterSPACEOptions {
+  /**
+   * Management API endpoint (typically `https://gateway.example.com:8081`)
+   * — the host:port that serves `/auth/challenge` and `/leg1/...`.
+   *
+   * **Not the same as the proxy URL.** The proxy `SpaceRouter` client
+   * takes `gatewayUrl` (typically `:443` or `:8080`) for HTTP CONNECT
+   * tunnelling; this interface's `gatewayMgmtUrl` is the *management*
+   * endpoint on the same host. They are two different ports on the
+   * same gateway server.
+   *
+   * **Common error: HTTP 407.** Pointing `gatewayMgmtUrl` at the proxy
+   * port returns 407 on every challenge fetch because the proxy
+   * listener only accepts CONNECT. If you see 407, you probably
+   * swapped `gatewayMgmtUrl` and the proxy `gatewayUrl`.
+   */
   gatewayMgmtUrl: string;
+  /** Consumer wallet — signs auth challenges and Leg 1 receipts. */
   wallet: ClientPaymentWallet;
-  /** Propagated to ConsumerSettlementClient.submitSignatures. */
+  /**
+   * If `true`, settlement errors (e.g. `eip712_signer_mismatch`) are
+   * re-thrown by the proxy client's `autoSettle` path. If `false`
+   * (default), the SDK swallows them and surfaces the rejection list
+   * via the return value of `submitSignatures`. Propagated to
+   * `ConsumerSettlementClient.submitSignatures`.
+   */
   strict?: boolean;
 }
 

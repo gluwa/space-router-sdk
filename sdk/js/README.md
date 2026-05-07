@@ -12,9 +12,20 @@ npm install @spacenetwork/spacerouter
 
 ```ts
 import { SpaceRouter } from "@spacenetwork/spacerouter";
+import { SpaceRouterSPACE } from "@spacenetwork/spacerouter/payment";
+
+// Two URLs, two purposes — see "gatewayUrl vs gatewayManagementUrl" below.
+const GATEWAY_URL            = "https://gateway.example.com";        // proxy CONNECT (:443/:8080)
+const GATEWAY_MANAGEMENT_URL = "https://gateway.example.com:8081";   // /auth/challenge + /leg1/*
 
 const client = new SpaceRouter("sr_live_YOUR_API_KEY", {
-  gatewayUrl: "http://gateway:8080",
+  gatewayUrl: GATEWAY_URL,
+});
+
+// Escrow-payment consumers also wire up the management endpoint:
+const space = new SpaceRouterSPACE({
+  gatewayMgmtUrl: GATEWAY_MANAGEMENT_URL,
+  wallet,            // your ClientPaymentWallet
 });
 
 const response = await client.get("https://httpbin.org/ip");
@@ -24,6 +35,21 @@ console.log(response.requestId);    // unique request ID for tracing
 
 client.close();
 ```
+
+### `gatewayUrl` vs `gatewayManagementUrl`
+
+Two listeners on the *same* gateway server:
+
+* `gatewayUrl` (passed to `SpaceRouter`) is the **proxy** endpoint —
+  typically port 443 or 8080. It only handles `CONNECT` for tunnelled
+  application traffic.
+* `gatewayMgmtUrl` (passed to `SpaceRouterSPACE`, conceptually the
+  same as `gatewayManagementUrl`) is the **management API** endpoint —
+  typically port 8081. It serves `/auth/challenge` and `/leg1/...`.
+
+Sending management requests to the proxy port returns **HTTP 407**
+because the proxy listener only answers `CONNECT`. See the
+troubleshooting section below.
 
 ## Region Targeting
 
@@ -130,6 +156,35 @@ try {
 ```
 
 Note: HTTP errors from the target website (e.g. 404, 500) are **not** thrown as exceptions. Only proxy-layer errors produce exceptions.
+
+## Troubleshooting
+
+### If you get HTTP 407, you probably swapped `proxy_url` and `gateway_url`
+
+`HTTP 407 Proxy Authentication Required` on a management call (e.g.
+`SpaceRouterSPACE.requestChallenge()` or any `/auth/challenge` /
+`/leg1/...` request) almost always means you pointed `gatewayMgmtUrl`
+at the **proxy** listener instead of the **management** listener.
+
+The proxy port (typically `:443` or `:8080`) only handles `CONNECT` —
+every other verb is answered with 407. The management API
+(`/auth/challenge`, `/leg1/...`) lives on a different port (typically
+`:8081`) on the same gateway host.
+
+Fix:
+
+```ts
+// Wrong — both URLs point at the proxy port:
+new SpaceRouterSPACE({ gatewayMgmtUrl: "https://gateway.example.com" });
+//                                      ^^^ proxy port — returns 407 on /auth/challenge
+
+// Right — management URL is the :8081 listener:
+new SpaceRouterSPACE({ gatewayMgmtUrl: "https://gateway.example.com:8081" });
+```
+
+If your deployment exposes both proxy and management on the same port
+(some single-port gateways do), set both to the same URL. Otherwise
+keep them split.
 
 ## Configuration
 

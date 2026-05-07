@@ -44,18 +44,30 @@ _HTTP_METHOD_NAMES = frozenset({
 class SpaceRouterSPACE:
     """High-level Consumer client for SPACE-token proxy payments.
 
+    **Two URLs, two purposes.** The ``proxy_url`` parameter is the base
+    proxy endpoint (typically ``https://gateway.example.com``, port 443
+    or 8080) where the SDK routes HTTP CONNECT requests for your
+    application traffic. The ``gateway_url`` is the management API
+    endpoint (typically the same hostname on port 8081) where the SDK
+    fetches auth challenges and settles Leg 1 receipts. **They are two
+    different ports on the same gateway server** — sending management
+    requests to the proxy listener returns HTTP 407 because the proxy
+    port only handles CONNECT.
+
     Parameters
     ----------
     gateway_url : str
-        Gateway URL used for management-API calls (``/auth/challenge``,
-        ``/leg1/...``) when ``management_url`` is not set. In a typical
-        deployment the proxy listener is on :8080 (or :443) and the
-        management API is on :8081 — those are different endpoints. If
-        you only have one URL handy, point ``gateway_url`` at the
-        management endpoint.
+        Management API URL used for ``/auth/challenge`` and ``/leg1/...``
+        calls when ``management_url`` is not set. In a typical deployment
+        this is ``https://gateway.example.com:8081`` while ``proxy_url``
+        points at port 443/8080 on the same host. If you only have one
+        URL handy, point ``gateway_url`` at the management endpoint.
     proxy_url : str
-        Proxy endpoint URL (e.g., ``http://gateway:8080``). This is what
-        the SDK uses for HTTP CONNECT.
+        Proxy endpoint URL (e.g., ``https://gateway.example.com:8080`` or
+        ``:443``). This is the CONNECT listener; the SDK passes it to the
+        ``SpaceRouter`` proxy client for tunnelled application traffic.
+        Do **not** point this at the management port — see "Common
+        error: HTTP 407" below.
     private_key : str
         Consumer's wallet private key.
     chain_id : int
@@ -86,6 +98,17 @@ class SpaceRouterSPACE:
         single-URL behaviour. Sending ``GET /auth/challenge`` to the
         proxy listener returns ``HTTP 407`` because that listener only
         accepts ``CONNECT`` — passing ``management_url`` is the fix.
+
+    Common error: HTTP 407
+    ----------------------
+    If ``request_challenge()`` (or any management call) returns
+    ``HTTP 407 Proxy Authentication Required``, you have almost
+    certainly swapped ``proxy_url`` and ``gateway_url`` (or pointed
+    ``gateway_url`` / ``management_url`` at the proxy port). The proxy
+    listener only accepts ``CONNECT`` — every other verb is answered
+    with 407. Double-check that ``gateway_url`` resolves to the
+    management port (typically :8081) and ``proxy_url`` resolves to the
+    CONNECT listener (typically :443 or :8080).
     """
 
     def __init__(

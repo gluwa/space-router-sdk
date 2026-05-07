@@ -9,6 +9,67 @@ that contradicts it is a bug in this guide.
 
 ---
 
+## Two URLs, two purposes
+
+Before anything else: the SDK takes **two** gateway URLs, and getting
+them mixed up is the single most common configuration bug.
+
+* **`proxy_url`** (env: `SR_GATEWAY_URL`; JS: `gatewayUrl` on
+  `SpaceRouter`) is the **proxy** endpoint — typically
+  `https://gateway.example.com` on port 443 or 8080. It only handles
+  HTTP `CONNECT` for your tunnelled application traffic.
+* **`gateway_url`** / **`management_url`** (env:
+  `SR_GATEWAY_MANAGEMENT_URL`; JS: `gatewayMgmtUrl` on
+  `SpaceRouterSPACE`) is the **management API** endpoint — typically
+  the same hostname on port 8081. It serves `/auth/challenge` and
+  `/leg1/...`.
+
+They are two different ports on the same gateway server. Sending
+management requests to the proxy listener returns **HTTP 407** because
+the proxy port only handles `CONNECT`.
+
+```bash
+# Typical split-port deployment:
+export SR_GATEWAY_URL="https://gateway.example.com"           # :443 / :8080
+export SR_GATEWAY_MANAGEMENT_URL="https://gateway.example.com:8081"
+```
+
+If your deployment exposes both proxy and management on the same port
+(some single-port test gateways do), set both vars to the same URL —
+otherwise keep them split.
+
+---
+
+## If you get HTTP 407 (you swapped the URLs)
+
+**Symptom.** `request_challenge()` raises `HTTP 407 Proxy
+Authentication Required`. Or every `/leg1/...` call returns 407. Or
+`spacerouter receipts sync` reports 407 against `/leg1/pending`.
+
+**Cause.** You pointed `SR_GATEWAY_MANAGEMENT_URL` (or the SDK's
+`gateway_url` / `management_url` parameter) at the **proxy** port
+instead of the **management** port. The proxy listener only accepts
+`CONNECT` — every other verb is answered with 407.
+
+**Fix.**
+
+```bash
+# Confirm both URLs first.
+echo "$SR_GATEWAY_URL"             # should be the proxy listener (:443/:8080)
+echo "$SR_GATEWAY_MANAGEMENT_URL"  # should be the management listener (:8081)
+
+# Probe the management endpoint directly — it should return JSON, not 407.
+curl -i "$SR_GATEWAY_MANAGEMENT_URL/auth/challenge"
+# 200 OK  + {"challenge": "..."}        — correct
+# 407 Proxy Authentication Required     — wrong port, fix the env var
+```
+
+If you only have one URL handy and the gateway uses split ports, the
+management URL is almost always `${SR_GATEWAY_URL%/}:8081` — check
+with the deployment owner before assuming.
+
+---
+
 ## Chain ID mismatch (`expect 102031`)
 
 **Symptom.** EIP-712 signatures recover to a different address than
