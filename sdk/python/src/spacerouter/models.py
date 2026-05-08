@@ -209,8 +209,20 @@ class VouchingSignature(BaseModel):
 class ProxyResponse:
     """Thin wrapper around :class:`httpx.Response` with SpaceRouter metadata.
 
-    Exposes ``node_id`` and ``request_id`` from response headers and
-    delegates everything else to the underlying httpx response.
+    Exposes ``request_id`` from response headers and delegates everything
+    else to the underlying httpx response.
+
+    HTTPS targets — known limitation
+    --------------------------------
+    For HTTP target URLs the gateway injects ``X-SpaceRouter-Request-Id``
+    into the inner response and ``request_id`` works as expected. For
+    HTTPS target URLs the gateway only sees the proxy ``CONNECT`` (the
+    inner request is end-to-end TLS), so it can only stamp the request
+    ID on the ``CONNECT 200`` response — and httpx does not surface
+    ``CONNECT`` response headers to callers. As a result,
+    ``request_id`` is ``None`` for HTTPS targets in the Python SDK
+    today. The gateway-side ID still exists and shows up in
+    server-side logs; correlate by timestamp + node-id if needed.
     """
 
     def __init__(self, response: httpx.Response) -> None:
@@ -218,7 +230,13 @@ class ProxyResponse:
 
     @property
     def request_id(self) -> str | None:
-        """Unique request ID for tracing (``X-SpaceRouter-Request-Id``)."""
+        """Unique request ID for tracing (``X-SpaceRouter-Request-Id``).
+
+        Populated for HTTP target URLs (gateway injects on the inner
+        response). Returns ``None`` for HTTPS targets — see the class
+        docstring for the architectural reason. Use server-side logs
+        plus timestamp / node-id to correlate HTTPS requests.
+        """
         return self._response.headers.get("x-spacerouter-request-id")
 
     def __getattr__(self, name: str) -> Any:

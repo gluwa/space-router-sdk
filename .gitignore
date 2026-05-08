@@ -20,9 +20,16 @@ dist/
 *.swp
 *.swo
 
-# Secrets
+# Secrets — including local E2E orchestration scripts that may carry
+# private keys, internal endpoints, or operator-funding helpers.
+# Keep this list tight; if a path here ever ends up tracked in a PR,
+# treat it as a security incident.
 .env
 .env.*
+e2e_local/
+e2e-local/
+sdk/*/e2e_local/
+sdk/*/e2e-local/
 
 # OS
 .DS_Store

@@ -17,7 +17,10 @@ from spacerouter.payment.eip712 import Receipt, address_to_bytes32
 
 logger = logging.getLogger(__name__)
 
-# Minimal ABI for SDK escrow operations (matches TokenPaymentEscrow.sol)
+# Minimal ABI for SDK escrow operations (matches TokenPaymentEscrow.sol).
+# v1.5.0-rc.11: include custom-error definitions so web3.py auto-decodes
+# reverts like ``WithdrawalNotUnlocked`` instead of bubbling raw selector
+# hex (``0x6307a3e2…``) up to the consumer.
 ESCROW_ABI = [
     {"inputs": [{"type": "uint256", "name": "amount"}], "name": "deposit", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
     {"inputs": [{"type": "address", "name": "beneficiary"}, {"type": "uint256", "name": "amount"}], "name": "depositFor", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
@@ -29,6 +32,19 @@ ESCROW_ABI = [
     {"inputs": [{"type": "address", "name": "client"}, {"type": "string", "name": "requestUUID"}], "name": "isNonceUsed", "outputs": [{"type": "bool"}], "stateMutability": "view", "type": "function"},
     {"inputs": [], "name": "WITHDRAWAL_DELAY", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"},
     {"inputs": [], "name": "token", "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
+    # Custom errors declared in TokenPaymentEscrow.sol — keep this list
+    # in sync with the contract source. Omitting any one of them causes
+    # web3.py / viem to fall back to raw selector hex on revert.
+    {"type": "error", "name": "InsufficientBalance", "inputs": [{"type": "uint256", "name": "available"}, {"type": "uint256", "name": "requested"}]},
+    {"type": "error", "name": "WithdrawalAlreadyPending", "inputs": []},
+    {"type": "error", "name": "NoWithdrawalPending", "inputs": []},
+    {"type": "error", "name": "WithdrawalNotUnlocked", "inputs": [{"type": "uint256", "name": "unlockAt"}, {"type": "uint256", "name": "currentTime"}]},
+    {"type": "error", "name": "ArrayLengthMismatch", "inputs": [{"type": "uint256", "name": "receiptsLen"}, {"type": "uint256", "name": "signaturesLen"}]},
+    {"type": "error", "name": "ZeroAmount", "inputs": []},
+    {"type": "error", "name": "ZeroAddress", "inputs": []},
+    {"type": "error", "name": "NotOperator", "inputs": []},
+    {"type": "error", "name": "NodeAlreadyRegistered", "inputs": [{"type": "bytes32", "name": "nodeAddress"}]},
+    {"type": "error", "name": "NotEOA", "inputs": [{"type": "address", "name": "account"}]},
 ]
 
 ERC20_ABI = [
@@ -79,7 +95,18 @@ class EscrowClient:
     # ── Read ──────────────────────────────────────────────────────────
 
     def balance(self, address: str) -> int:
-        """Query escrow balance for an address (wei)."""
+        """Query escrow balance for an address (wei).
+
+        Reads ``getBalance`` on the contract — the on-chain ``_balances``
+        slot. **This value is unaffected by ``initiate_withdrawal`` and
+        ``cancel_withdrawal``**: those methods only flip a pending-request
+        flag on a separate storage slot. Funds remain in the escrow
+        balance until ``execute_withdrawal`` runs after the timelock,
+        at which point ``_balances`` is debited.
+
+        Use ``withdrawal_request(address)`` to inspect any pending
+        request alongside this balance for the full picture.
+        """
         return self._contract.functions.getBalance(to_checksum_address(address)).call()
 
     def token_balance(self, address: str) -> int:
@@ -89,7 +116,14 @@ class EscrowClient:
         return self._token_contract.functions.balanceOf(to_checksum_address(address)).call()
 
     def withdrawal_request(self, address: str) -> tuple[int, int, bool]:
-        """Query pending withdrawal. Returns (amount, unlockAt, exists)."""
+        """Query pending withdrawal. Returns ``(amount, unlockAt, exists)``.
+
+        Use this to inspect a request that is in the locked-but-pending
+        state. Note: ``balance(address)`` does **not** include this
+        amount — the balance is only debited when ``execute_withdrawal``
+        runs after the timelock. See the class docstring for the full
+        three-phase lifecycle.
+        """
         result = self._contract.functions.getWithdrawalRequest(to_checksum_address(address)).call()
         return (result[0], result[1], result[2])
 
@@ -109,20 +143,27 @@ class EscrowClient:
         if not self._account:
             raise RuntimeError("Private key required for write operations")
 
-    def _send_tx(self, tx_func, gas: int = 200_000) -> str:
+    def _send_tx(self, tx_func, gas: int = 500_000) -> str:
+        """Build, estimate, sign, and broadcast a tx.
+
+        ``gas`` is a fallback ceiling used only if eth_estimateGas fails (some
+        RPCs are flaky on contract calls). The estimator runs against the
+        unsigned tx WITHOUT a pre-set gas — pre-setting it confused some
+        Creditcoin RPCs into refusing to estimate above the supplied value
+        (root cause of v1.5.0-rc.1's "deposit reverts at 200k gas" bug).
+        """
         self._require_signer()
         wallet = self._account.address
         tx = tx_func.build_transaction({
             "from": wallet,
             "nonce": self._w3.eth.get_transaction_count(wallet),
             "chainId": self._w3.eth.chain_id,
-            "gas": gas,
         })
         try:
             est = self._w3.eth.estimate_gas(tx)
-            tx["gas"] = int(est * 1.2)
+            tx["gas"] = int(est * 1.3)
         except Exception:
-            pass
+            tx["gas"] = gas
         signed = self._w3.eth.account.sign_transaction(tx, self._account.key)
         tx_hash = self._w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = self._w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
@@ -145,18 +186,53 @@ class EscrowClient:
                         to_checksum_address(self._contract_address), amount
                     ), gas=100_000,
                 )
-        return self._send_tx(self._contract.functions.deposit(amount))
+        # Deposit observed at ~303k gas on Creditcoin testnet. Set the
+        # fallback ceiling above that so we never underestimate when
+        # eth_estimateGas is unavailable.
+        return self._send_tx(self._contract.functions.deposit(amount), gas=500_000)
 
     def initiate_withdrawal(self, amount: int) -> str:
-        """Start withdrawal with 5-day timelock."""
+        """Phase 1 of 3 — record a withdrawal request with a 5-day timelock.
+
+        This call does **not** move tokens. It only stores
+        ``(amount, unlockAt)`` on-chain so the funds are reserved for
+        the eventual ``execute_withdrawal`` and the timelock can run.
+        Therefore ``balance(address)`` is unchanged after
+        ``initiate_withdrawal`` returns. Query
+        ``withdrawal_request(address)`` to see the locked-but-pending
+        amount.
+
+        Lifecycle:
+            1. ``initiate_withdrawal(amount)`` — record request, no
+               balance change.
+            2. ``execute_withdrawal()`` — after the timelock elapses,
+               actually transfers tokens out and debits ``balance``.
+            3. ``cancel_withdrawal()`` — at any point before step 2,
+               clear the request. Also no balance change because no
+               debit ever happened.
+        """
         if amount <= 0:
             raise ValueError("Amount must be positive")
         return self._send_tx(self._contract.functions.initiateWithdrawal(amount), gas=150_000)
 
     def execute_withdrawal(self) -> str:
-        """Complete pending withdrawal after timelock."""
+        """Phase 2 of 3 — finalise the pending withdrawal after timelock.
+
+        This is the **only** phase that actually moves tokens. The
+        contract transfers the previously-requested amount to the
+        client and debits ``balance(address)`` by the same amount.
+        Reverts if no request exists or the unlock time has not yet
+        passed. See ``initiate_withdrawal`` for the full lifecycle.
+        """
         return self._send_tx(self._contract.functions.executeWithdrawal(), gas=150_000)
 
     def cancel_withdrawal(self) -> str:
-        """Cancel pending withdrawal."""
+        """Phase 3 (alternate) of 3 — clear the pending withdrawal request.
+
+        Removes the on-chain request record. Because
+        ``initiate_withdrawal`` never debited the balance, this call
+        also produces **no balance change** — that is by design, not a
+        bug. ``balance(address)`` was already correct throughout. See
+        ``initiate_withdrawal`` for the three-phase lifecycle.
+        """
         return self._send_tx(self._contract.functions.cancelWithdrawal(), gas=100_000)

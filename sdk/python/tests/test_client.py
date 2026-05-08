@@ -138,16 +138,27 @@ class TestCheckProxyErrors:
     def test_503_no_nodes(self):
         resp = self._make_response(
             503,
-            json_body={"error": "no_nodes_available", "message": "..."},
+            json_body={"error": "no_nodes_available", "message": "specific msg"},
+        )
+        with pytest.raises(NoNodesAvailableError) as exc_info:
+            _check_proxy_errors(resp)
+        # Body's message wins when present.
+        assert "specific msg" in str(exc_info.value)
+
+    def test_503_empty_body_maps_to_no_nodes(self):
+        # Fly upstream timeout / generic 503 with no JSON body.
+        resp = self._make_response(503)
+        with pytest.raises(NoNodesAvailableError) as exc_info:
+            _check_proxy_errors(resp)
+        assert "No residential nodes currently available" in str(exc_info.value)
+
+    def test_503_other_shape_maps_to_no_nodes(self):
+        # Different body shape (no `error` key) still maps to typed error.
+        resp = self._make_response(
+            503, json_body={"detail": "upstream timeout"}
         )
         with pytest.raises(NoNodesAvailableError):
             _check_proxy_errors(resp)
-
-    def test_503_other_passes_through(self):
-        resp = self._make_response(
-            503, json_body={"error": "something_else", "message": "..."}
-        )
-        _check_proxy_errors(resp)  # should NOT raise
 
     def test_200_passes_through(self):
         resp = self._make_response(200)
@@ -322,3 +333,36 @@ class TestIpTypeRouting:
         assert routed._ip_type == "datacenter"
         client.close()
         routed.close()
+
+
+class TestWithRoutingForwardsHttpxKwargs:
+    """rc.4 regression: ``with_routing`` must forward ``verify`` and any
+    other ``**httpx_kwargs`` from the parent. Pre-rc.4 these were silently
+    dropped — testnet users with self-signed certs and ``verify=False``
+    saw the routing-derived client trip ``CERTIFICATE_VERIFY_FAILED``.
+    """
+
+    def test_forwards_verify_false(self):
+        client = SpaceRouter("sr_live_test", verify=False)
+        routed = client.with_routing(region="KR")
+        assert routed._verify is False
+        client.close()
+        routed.close()
+
+    def test_forwards_arbitrary_httpx_kwargs(self):
+        client = SpaceRouter(
+            "sr_live_test",
+            trust_env=False,
+            follow_redirects=True,
+        )
+        routed = client.with_routing(region="JP")
+        assert routed._httpx_kwargs.get("trust_env") is False
+        assert routed._httpx_kwargs.get("follow_redirects") is True
+        client.close()
+        routed.close()
+
+    def test_async_forwards_verify_false(self):
+        from spacerouter import AsyncSpaceRouter
+        client = AsyncSpaceRouter("sr_live_test", verify=False)
+        routed = client.with_routing(region="KR")
+        assert routed._verify is False

@@ -1,13 +1,14 @@
 {
   "name": "@spacenetwork/spacerouter",
-  "version": "0.2.3",
+  "version": "1.5.0-rc.11",
   "description": "JavaScript SDK for the Space Router residential proxy network",
   "type": "module",
   "exports": {
     ".": {
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

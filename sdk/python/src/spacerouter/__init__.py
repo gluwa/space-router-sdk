@@ -1,12 +1,21 @@
 """SpaceRouter Python SDK — route HTTP requests through residential IPs."""
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    __version__ = _pkg_version("spacerouter")
+except PackageNotFoundError:  # pragma: no cover — running from source
+    __version__ = "0.0.0+local"
+
 from spacerouter.admin import AsyncSpaceRouterAdmin, SpaceRouterAdmin
 from spacerouter.client import AsyncSpaceRouter, SpaceRouter
+from spacerouter.escrow import EscrowClient
 from spacerouter.exceptions import (
     AuthenticationError,
     NoNodesAvailableError,
     QuotaExceededError,
     RateLimitError,
+    SettlementRejected,
     SpaceRouterError,
     UpstreamError,
 )
@@ -29,6 +38,13 @@ from spacerouter.models import (
     Transfer,
     TransferPage,
     VouchingSignature,
+)
+from spacerouter.payment import (
+    ClientPaymentWallet,
+    ConsumerSettlementClient,
+    EIP712Domain,
+    Receipt,
+    SpaceRouterSPACE,
 )
 
 __all__ = [
@@ -54,6 +70,13 @@ __all__ = [
     "NoNodesAvailableError",
     "QuotaExceededError",
     "UpstreamError",
+    "SettlementRejected",
+    "SpaceRouterSPACE",
+    "EscrowClient",
+    "Receipt",
+    "EIP712Domain",
+    "ConsumerSettlementClient",
+    "ClientPaymentWallet",
     "load_or_create_identity",
     "sign_request",
     "create_vouching_signature",

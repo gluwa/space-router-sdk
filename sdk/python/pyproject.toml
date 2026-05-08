@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "spacerouter"
-version = "0.3.0b1"
+version = "1.5.0rc11"
 description = "Python SDK for the Space Router residential proxy network"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,7 @@ dependencies = [
     "pydantic>=2.0,<3.0",
     "eth-account>=0.13,<1.0",
     "web3>=7,<8",
+    "tenacity>=8.0,<10.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,17 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spacerouter"]
+
+# Sdist whitelist — only ship the source package + licence + readme.
+# Without this, hatchling's default sdist rules ship everything in the
+# source dir (tests/, docs/, fixtures, scripts). Keep in lock-step
+# with the wheel target above.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/spacerouter",
+    "README.md",
+    "LICENSE",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

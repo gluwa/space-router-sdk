@@ -64,7 +64,12 @@ jobs:
         working-directory: sdk/js
       - run: npm run build
         working-directory: sdk/js
-      - run: npm publish --provenance --access public
+      - name: Publish (rc tag for prereleases, latest for stable)
         working-directory: sdk/js
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          if [[ "$VERSION" == *-* ]]; then TAG=rc; else TAG=latest; fi
+          echo "Publishing $VERSION under dist-tag '$TAG'"
+          npm publish --provenance --access public --tag "$TAG"

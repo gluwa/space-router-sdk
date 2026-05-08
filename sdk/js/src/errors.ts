@@ -91,3 +91,19 @@ export class UpstreamError extends SpaceRouterError {
     this.name = "UpstreamError";
   }
 }
+
+/**
+ * Raised by `ConsumerSettlementClient.submitSignatures` (and `syncReceipts`)
+ * when `strict=true` and the gateway rejects one or more Leg 1 signatures.
+ *
+ * Per protocol §9 the rejected list is normal operating output, not a
+ * transport error — callers opt into raising via `strict`.
+ */
+export class SettlementRejectedError extends Error {
+  reasons: Array<{ requestUuid: string; reason: string }>;
+  constructor(reasons: Array<{ requestUuid: string; reason: string }>) {
+    super(`Gateway rejected ${reasons.length} Leg 1 signature(s)`);
+    this.name = "SettlementRejectedError";
+    this.reasons = reasons;
+  }
+}

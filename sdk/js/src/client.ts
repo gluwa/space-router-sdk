@@ -3,9 +3,35 @@
  *
  * Routes HTTP requests through the Space Router residential proxy network
  * via HTTP or SOCKS5.
+ *
+ * --- CONNECT-time error mapping (the 5-cycle history) -----------------------
+ *
+ * When the proxy CONNECT response is non-200 (e.g. 407 bad API key, 503 no
+ * nodes), undici's `proxy-agent.js` throws a `RequestAbortedError` BEFORE
+ * fetch can return a Response. The user-facing error is a bare
+ * `TypeError("fetch failed")` with the real proxy-status info buried in the
+ * `.cause` chain.
+ *
+ * Critically, undici interposes a `DOMException("Request was cancelled.")`
+ * between the top-level `TypeError` and the `RequestAbortedError`, so the
+ * real chain in production is THREE deep:
+ *
+ *   [L0] TypeError: fetch failed
+ *   [L1] DOMException: Request was cancelled.
+ *   [L2] RequestAbortedError: Proxy response (407) !== 200 when HTTP Tunneling
+ *
+ * rc.6 added a 407 mapping that only inspected L1. rc.8 added a 503 mapping
+ * that also only inspected L1. Neither shipped fix matched in production
+ * because the proxy-status string lives at L2. Unit tests passed because
+ * they mocked the cause chain at L1 directly. Cycles 6, 7, and 8 all left
+ * users seeing bare `TypeError: fetch failed` for every CONNECT-time error.
+ *
+ * rc.9 walks up to 5 levels of `.cause` so any future undici reshuffling
+ * still resolves the proxy-status info. Tests use a real local CONNECT
+ * server (not a mocked TypeError) so a future regression of the cause-chain
+ * shape gets caught automatically.
  */
 
-import { ProxyAgent } from "undici";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import {
   AuthenticationError,
@@ -17,6 +43,8 @@ import {
 } from "./errors.js";
 import type { IpType, SpaceRouterOptions } from "./models.js";
 import { ProxyResponse } from "./models.js";
+import type { SpaceRouterSPACE } from "./payment/spacecoin.js";
+import { CapturingProxyAgent } from "./proxyAgent.js";
 
 const DEFAULT_HTTP_GATEWAY = "https://gateway.spacerouter.org";
 const DEFAULT_TIMEOUT = 30_000;
@@ -36,6 +64,19 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   body?: BodyInit;
   signal?: AbortSignal;
+  /**
+   * v1.5 escrow payment façade.  When set, the client fetches a fresh
+   * challenge per request and injects the four `X-SpaceRouter-*` payment
+   * headers into the outgoing request.  Headers always take precedence over
+   * caller-supplied entries with the same name.
+   */
+  payment?: SpaceRouterSPACE;
+  /**
+   * v1.5 auto-settle: after a request, call `payment.syncReceipts()`.
+   * Errors are warn-logged unless `payment.strict` is true.
+   * Has no effect unless `payment` is also set.
+   */
+  autoSettle?: boolean;
 }
 
 /**
@@ -47,7 +88,10 @@ function buildAgent(
   apiKey: string,
   gatewayUrl: string,
   protocol: "http" | "socks5",
-): ProxyAgent | SocksProxyAgent {
+  region?: string,
+  ipType?: IpType,
+  verify: boolean = true,
+): CapturingProxyAgent | SocksProxyAgent {
   const parsed = new URL(gatewayUrl);
   const host = parsed.hostname || "localhost";
   const scheme = parsed.protocol.replace(":", "") || "https";
@@ -55,6 +99,11 @@ function buildAgent(
   if (protocol === "socks5") {
     const port = parsed.port || "1080";
     const socksUrl = `socks5://${apiKey}:@${host}:${port}`;
+    // socks-proxy-agent's TLS verification for the inner request is
+    // controlled by Node's https module / `NODE_TLS_REJECT_UNAUTHORIZED`,
+    // not a constructor option that propagates cleanly here. Document the
+    // workaround in models.ts/README; do not try to wire `verify` into
+    // SOCKS5 — it would be a no-op and misleading.
     return new SocksProxyAgent(socksUrl);
   }
 
@@ -63,11 +112,54 @@ function buildAgent(
   // undici sends `proxy-authorization` (lowercase) but some proxy servers
   // require title-case `Proxy-Authorization`.  Use explicit headers instead
   // of the `token` option to control the casing.
+  // Region/ipType MUST land on the proxy CONNECT (gateway can't read inside
+  // the inner TLS tunnel), so we stamp them onto the agent's headers map.
   const proxyHeaders: Record<string, string> = {
     "Proxy-Authorization": `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
   };
+  if (region) proxyHeaders["X-SpaceRouter-Region"] = region;
+  if (ipType) proxyHeaders["X-SpaceRouter-IP-Type"] = ipType;
 
-  return new ProxyAgent({ uri: proxyUrl, headers: proxyHeaders });
+  // `verify: false` toggles TLS cert verification for both the gateway
+  // (proxyTls) and the inner CONNECT-tunnelled request (requestTls).
+  // The reported repro was SELF_SIGNED_CERT_IN_CHAIN on the gateway hop,
+  // but disabling only proxyTls leaves the inner TLS context strict and
+  // can re-trigger the same failure mode for self-signed inner targets
+  // (e.g. when the test gateway speaks TLS twice).
+  const tlsOpts = verify ? undefined : { rejectUnauthorized: false };
+
+  // CapturingProxyAgent extends ProxyAgent and snapshots the CONNECT
+  // response headers (X-SpaceRouter-Node etc.) so they survive the hop
+  // through undici's fetch — ProxyResponse reads them back via the
+  // `metadata` argument set by the request layer below.
+  return new CapturingProxyAgent({
+    uri: proxyUrl,
+    headers: proxyHeaders,
+    ...(tlsOpts ? { proxyTls: tlsOpts, requestTls: tlsOpts } : {}),
+  });
+}
+
+/**
+ * Walk up to 5 levels of `.cause` looking for an error whose `.message`
+ * matches the given predicate. Returns true on first hit.
+ *
+ * Why 5 levels: undici's CONNECT-time errors are typically 3 deep
+ * (TypeError → DOMException → RequestAbortedError). 5 gives headroom in
+ * case a future undici release adds another wrapper, without devolving
+ * into an unbounded walk on a circular `.cause` (which we've never seen
+ * but cheap to guard against).
+ */
+function findInCauseChain(
+  err: unknown,
+  predicate: (msg: string) => boolean,
+): boolean {
+  let cur: unknown = err;
+  for (let depth = 0; depth < 5 && cur; depth++) {
+    const msg = (cur as { message?: unknown }).message;
+    if (typeof msg === "string" && predicate(msg)) return true;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /** Check for proxy-layer errors and throw typed exceptions. */
@@ -122,18 +214,19 @@ async function checkProxyErrors(response: Response): Promise<void> {
   }
 
   if (response.status === 503) {
+    // Any 503 from the proxy chain — gateway-rejected, upstream timeout,
+    // empty body, etc. — is mapped to NoNodesAvailableError so callers
+    // get a typed signal instead of crashing on response.json().
+    let message = "No residential nodes currently available";
     try {
       const body = (await response.clone().json()) as Record<string, unknown>;
-      if (body.error === "no_nodes_available") {
-        throw new NoNodesAvailableError(
-          "No residential nodes currently available",
-          { statusCode: 503, requestId },
-        );
+      if (typeof body.message === "string" && body.message.length > 0) {
+        message = body.message;
       }
-    } catch (e) {
-      if (e instanceof NoNodesAvailableError) throw e;
-      // JSON parse failure — not a SpaceRouter error, pass through
+    } catch {
+      // JSON parse failure — fall through with the generic message.
     }
+    throw new NoNodesAvailableError(message, { statusCode: 503, requestId });
   }
 }
 
@@ -148,6 +241,19 @@ async function checkProxyErrors(response: Response): Promise<void> {
  * client.close();
  * ```
  */
+/**
+ * Options for the {@link SpaceRouter} constructor — superset of
+ * {@link SpaceRouterOptions} that also accepts the v1.5 payment façade
+ * and an autoSettle flag.  Setting them here makes every request paid
+ * by default; callers can still override per-call via {@link RequestOptions}.
+ */
+export interface SpaceRouterClientOptions extends SpaceRouterOptions {
+  /** v1.5 escrow payment façade. See {@link RequestOptions.payment}. */
+  payment?: SpaceRouterSPACE;
+  /** v1.5 auto-settle. See {@link RequestOptions.autoSettle}. */
+  autoSettle?: boolean;
+}
+
 export class SpaceRouter {
   private readonly _apiKey: string;
   private readonly _gatewayUrl: string;
@@ -155,9 +261,12 @@ export class SpaceRouter {
   private readonly _region: string | undefined;
   private readonly _ipType: IpType | undefined;
   private readonly _timeout: number;
-  private readonly _agent: ProxyAgent | SocksProxyAgent;
+  private readonly _verify: boolean;
+  private readonly _agent: CapturingProxyAgent | SocksProxyAgent;
+  private readonly _payment: SpaceRouterSPACE | undefined;
+  private readonly _autoSettle: boolean;
 
-  constructor(apiKey: string, options?: SpaceRouterOptions) {
+  constructor(apiKey: string, options?: SpaceRouterClientOptions) {
     this._apiKey = apiKey;
     this._gatewayUrl = options?.gatewayUrl ?? DEFAULT_HTTP_GATEWAY;
     this._protocol = options?.protocol ?? "http";
@@ -165,7 +274,17 @@ export class SpaceRouter {
     this._ipType = options?.ipType;
     if (this._region) validateRegion(this._region);
     this._timeout = options?.timeout ?? DEFAULT_TIMEOUT;
-    this._agent = buildAgent(apiKey, this._gatewayUrl, this._protocol);
+    this._verify = options?.verify ?? true;
+    this._agent = buildAgent(
+      apiKey,
+      this._gatewayUrl,
+      this._protocol,
+      this._region,
+      this._ipType,
+      this._verify,
+    );
+    this._payment = options?.payment;
+    this._autoSettle = options?.autoSettle ?? false;
   }
 
   // -- HTTP methods ---------------------------------------------------------
@@ -176,13 +295,46 @@ export class SpaceRouter {
     url: string,
     options?: RequestOptions,
   ): Promise<ProxyResponse> {
+    // User-supplied inner-request headers — these ride inside the TLS tunnel
+    // and are NOT visible to the gateway. Routing/payment headers go on the
+    // proxy CONNECT below.
     const headers: Record<string, string> = { ...options?.headers };
 
-    if (this._region) {
-      headers["X-SpaceRouter-Region"] = this._region;
-    }
-    if (this._ipType) {
-      headers["X-SpaceRouter-IP-Type"] = this._ipType;
+    // v1.5 payment header injection — fetch fresh challenge per request.
+    // Payment headers MUST land on the proxy CONNECT (not on the inner
+    // TLS-tunnelled request) so the gateway can read them. We achieve
+    // this by building a per-request ProxyAgent with the payment
+    // headers stamped onto its connect-time headers map. The shared
+    // long-lived `_agent` is only used for non-paid requests.
+    //
+    // `payment` and `autoSettle` may be supplied either at construction
+    // time (the documented happy path) or per-call via RequestOptions.
+    // Per-call overrides take precedence; otherwise we fall back to the
+    // values stored on the client.
+    const payment = options?.payment ?? this._payment;
+    const autoSettle = options?.autoSettle ?? this._autoSettle;
+    let dispatcher = this._agent;
+    if (payment) {
+      const challenge = await payment.requestChallenge();
+      const paymentHeaders = await payment.buildAuthHeaders(challenge);
+      const parsed = new URL(this._gatewayUrl);
+      const scheme = parsed.protocol.replace(":", "") || "https";
+      const port = parsed.port || (scheme === "https" ? "443" : "8080");
+      const proxyUrl = `${scheme}://${parsed.hostname}:${port}`;
+      const connectHeaders: Record<string, string> = {
+        "Proxy-Authorization": `Basic ${Buffer.from(`${this._apiKey}:`).toString("base64")}`,
+        ...paymentHeaders,
+      };
+      if (this._region) connectHeaders["X-SpaceRouter-Region"] = this._region;
+      if (this._ipType) connectHeaders["X-SpaceRouter-IP-Type"] = this._ipType;
+      const tlsOpts = this._verify
+        ? undefined
+        : { rejectUnauthorized: false };
+      dispatcher = new CapturingProxyAgent({
+        uri: proxyUrl,
+        headers: connectHeaders,
+        ...(tlsOpts ? { proxyTls: tlsOpts, requestTls: tlsOpts } : {}),
+      });
     }
 
     const controller = new AbortController();
@@ -196,23 +348,84 @@ export class SpaceRouter {
         body: options?.body,
         signal,
         // @ts-expect-error -- Node.js fetch dispatcher option
-        dispatcher: this._agent,
+        dispatcher,
       });
 
       await checkProxyErrors(response);
-      return new ProxyResponse(response);
+      // For HTTPS targets the gateway emits X-SpaceRouter-Node / -Request-Id
+      // on the CONNECT 200 response. undici doesn't expose CONNECT headers
+      // to fetch's Response object, so we read them off the dispatcher
+      // instead — CapturingProxyAgent snapshotted them when the tunnel
+      // was established. SOCKS5 has no CONNECT header concept; metadata
+      // stays empty and ProxyResponse falls back to the inner-response
+      // header (HTTP target) or undefined.
+      const metadata =
+        dispatcher instanceof CapturingProxyAgent
+          ? dispatcher.capturedMetadata()
+          : undefined;
+      const proxyResponse = new ProxyResponse(response, metadata);
+
+      // NOTE: do NOT close the per-request dispatcher here even though
+      // we built it just for this call. fetch() returns when HEADERS
+      // arrive; the body stream still needs the underlying connection
+      // open while the caller reads .arrayBuffer() / .json() / .text().
+      // Closing here aborted body reads on large responses (E3 1MB
+      // failed every time). The dispatcher is GC-collected after the
+      // response is consumed; leaking it for the request's lifetime
+      // is the correct trade-off vs. truncating bodies.
+
+      if (autoSettle && payment) {
+        try {
+          await payment.syncReceipts();
+        } catch (settleErr) {
+          if (payment.strict) {
+            throw settleErr;
+          }
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[spacerouter] autoSettle failed (non-strict, swallowed): ${
+              settleErr instanceof Error ? settleErr.message : String(settleErr)
+            }`,
+          );
+        }
+      }
+
+      return proxyResponse;
     } catch (err) {
       if (err instanceof SpaceRouterError) throw err;
 
-      // undici converts a 407 during HTTPS CONNECT tunnel setup into a
-      // TypeError("fetch failed") instead of returning a Response object.
-      // Detect this and surface the proper AuthenticationError.
+      // undici converts a non-200 proxy CONNECT response into a
+      // TypeError("fetch failed") instead of returning a Response. The real
+      // proxy-status info lives DEEPER in the cause chain than a single
+      // `.cause` lookup — see the file-top comment for the 5-cycle history
+      // and chain shape. Walk up to 5 levels.
       if (err instanceof TypeError && err.message === "fetch failed") {
-        const cause = (err as { cause?: Error }).cause;
-        if (cause?.message?.toLowerCase().includes("proxy authentication required")) {
+        // 407 — proxy auth failed during CONNECT (rc.6 origin, fixed for real in rc.9)
+        if (
+          findInCauseChain(
+            err,
+            (m) =>
+              m.toLowerCase().includes("proxy authentication required") ||
+              m.includes("Proxy response (407)"),
+          )
+        ) {
           throw new AuthenticationError("Invalid or missing API key", {
             statusCode: 407,
           });
+        }
+        // 503 — gateway has no nodes matching the request (rc.8 origin, fixed for real in rc.9)
+        if (
+          findInCauseChain(
+            err,
+            (m) =>
+              m.includes("Proxy response (503)") ||
+              m.toLowerCase().includes("service unavailable"),
+          )
+        ) {
+          throw new NoNodesAvailableError(
+            "No residential nodes currently available",
+            { statusCode: 503 },
+          );
         }
       }
       throw err;
@@ -252,12 +465,18 @@ export class SpaceRouter {
     region?: string;
     ipType?: IpType;
   }): SpaceRouter {
+    // Carry over payment / autoSettle / timeout — `withRouting` is meant to
+    // narrow the routing filter on an otherwise-identical client, not to
+    // strip the v1.5 escrow façade.
     return new SpaceRouter(this._apiKey, {
       gatewayUrl: this._gatewayUrl,
       protocol: this._protocol,
       region: options.region,
       ipType: options.ipType,
       timeout: this._timeout,
+      verify: this._verify,
+      payment: this._payment,
+      autoSettle: this._autoSettle,
     });
   }
 
@@ -270,7 +489,7 @@ export class SpaceRouter {
       "close" in this._agent &&
       typeof this._agent.close === "function"
     ) {
-      (this._agent as ProxyAgent).close();
+      (this._agent as CapturingProxyAgent).close();
     }
   }
 

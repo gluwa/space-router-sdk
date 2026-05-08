@@ -17,8 +17,11 @@ import os
 from typing import Annotated, Optional
 
 import typer
+from eth_account import Account
+from eth_utils import to_checksum_address
+from web3 import Web3
 
-from spacerouter.escrow import EscrowClient
+from spacerouter.escrow import ERC20_ABI, EscrowClient
 from spacerouter_cli.output import cli_error_handler, print_json
 
 app = typer.Typer(
@@ -233,4 +236,94 @@ def cancel_withdrawal(
         "action": "cancel_withdrawal",
         "tx_hash": tx_hash,
         "from": client.address,
+    })
+
+
+# -- Approve ----------------------------------------------------------
+
+
+TokenOpt = Annotated[
+    Optional[str],
+    typer.Option(
+        "--token",
+        help=(
+            "ERC-20 SPACE token address. If omitted, the escrow contract's "
+            "configured token() is used."
+        ),
+    ),
+]
+
+
+@app.command("approve")
+@cli_error_handler
+def approve(
+    amount_wei: Annotated[
+        int,
+        typer.Argument(help="Allowance to grant the escrow, in wei."),
+    ],
+    token: TokenOpt = None,
+    private_key: PrivateKeyOpt = None,
+    rpc_url: RpcOpt = None,
+    contract_address: ContractOpt = None,
+) -> None:
+    """Pre-flight ERC-20 ``approve(escrow, amount)`` for SPACE deposits.
+
+    ``escrow deposit`` already auto-approves when allowance is short, but
+    this lets you split approval and deposit into separate signed
+    transactions (useful for hardware-wallet workflows or one-time
+    ``approve(2**256-1)`` patterns).
+    """
+    if amount_wei < 0:
+        raise typer.BadParameter("Amount must be non-negative.")
+
+    # Resolve the EscrowClient to discover the token address (if not
+    # overridden) and to share the same RPC/contract resolution logic.
+    escrow = _resolve_client(rpc_url, contract_address, private_key)
+    if escrow._account is None:  # noqa: SLF001 — CLI helper
+        raise typer.BadParameter(
+            "Missing private key. Use --private-key or set "
+            "SR_ESCROW_PRIVATE_KEY.",
+        )
+
+    token_addr = token
+    if token_addr is None:
+        if escrow._token_contract is None:  # noqa: SLF001 — CLI helper
+            raise typer.BadParameter(
+                "Could not auto-resolve token address from escrow contract; "
+                "pass --token explicitly.",
+            )
+        token_addr = escrow._token_contract.address  # noqa: SLF001
+    token_addr = to_checksum_address(token_addr)
+    spender = to_checksum_address(escrow._contract_address)  # noqa: SLF001
+
+    # Use a *fresh* Web3 client for the approve so we don't depend on
+    # private state of EscrowClient beyond addresses.
+    w3 = Web3(Web3.HTTPProvider(rpc_url or os.environ.get(ENV_RPC)))
+    erc20 = w3.eth.contract(address=token_addr, abi=ERC20_ABI)
+    account = escrow._account  # noqa: SLF001 — already resolved above
+
+    tx = erc20.functions.approve(spender, int(amount_wei)).build_transaction({
+        "from": account.address,
+        "nonce": w3.eth.get_transaction_count(account.address),
+        "chainId": w3.eth.chain_id,
+        "gas": 100_000,
+    })
+    try:
+        est = w3.eth.estimate_gas(tx)
+        tx["gas"] = int(est * 1.2)
+    except Exception:
+        pass
+    signed = w3.eth.account.sign_transaction(tx, account.key)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    if receipt["status"] != 1:
+        raise RuntimeError(f"Approve transaction reverted: {tx_hash.hex()}")
+
+    print_json({
+        "action": "approve",
+        "amount_wei": int(amount_wei),
+        "token": token_addr,
+        "spender": spender,
+        "tx_hash": tx_hash.hex() if hasattr(tx_hash, "hex") else str(tx_hash),
+        "from": account.address,
     })

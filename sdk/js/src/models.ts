@@ -23,6 +23,17 @@ export interface SpaceRouterOptions {
   ipType?: IpType;
   /** Request timeout in milliseconds. Default: `30_000` */
   timeout?: number;
+  /**
+   * Set to `false` to skip TLS certificate verification for the gateway
+   * connection. Use only for development against a test gateway with a
+   * self-signed certificate. Default `true`.
+   *
+   * Note: this currently affects the HTTPS gateway path only. The SOCKS5
+   * path does not propagate this option — set
+   * `NODE_TLS_REJECT_UNAUTHORIZED=0` in the environment if you need to
+   * disable verification for SOCKS5 against a self-signed gateway.
+   */
+  verify?: boolean;
 }
 
 /** Options for the {@link SpaceRouterAdmin} constructor. */
@@ -198,17 +209,66 @@ export interface VouchingSignature {
  *
  * Exposes {@link nodeId} and {@link requestId} from response headers and
  * delegates common properties to the underlying fetch `Response`.
+ *
+ * For HTTPS target URLs (the typical case) the gateway sends
+ * ``X-SpaceRouter-Node`` on the proxy CONNECT 200 response, which undici
+ * normally drops before user code sees it. The SDK's
+ * ``CapturingProxyAgent`` snapshots those CONNECT headers and the
+ * client passes them in via the optional ``metadata`` argument so
+ * ``nodeId`` works for HTTPS too. For plain-HTTP targets the gateway
+ * also injects the same header into the inner response, so the
+ * fallback path below handles that case directly off the fetch
+ * response.
  */
+export interface ProxyResponseMetadata {
+  /** ID of the Provider that served this request (CONNECT capture). */
+  nodeId?: string;
+  /** X-SpaceRouter-Request-Id from the CONNECT response. */
+  requestId?: string;
+  /** "home" or "fallback" — gateway's routing decision tag. */
+  routingTag?: string;
+}
+
 export class ProxyResponse {
   private readonly _response: Response;
+  private readonly _metadata: ProxyResponseMetadata;
 
-  constructor(response: Response) {
+  constructor(response: Response, metadata?: ProxyResponseMetadata) {
     this._response = response;
+    this._metadata = metadata ?? {};
   }
 
   /** Unique request ID for tracing (`X-SpaceRouter-Request-Id`). */
   get requestId(): string | undefined {
-    return this._response.headers.get("x-spacerouter-request-id") ?? undefined;
+    // CONNECT-captured value first (set for HTTPS targets); fall back to
+    // the inner response header (HTTP targets — gateway injects the same
+    // X-SpaceRouter-Request-Id into the inner response stream).
+    return (
+      this._metadata.requestId
+      ?? this._response.headers.get("x-spacerouter-request-id")
+      ?? undefined
+    );
+  }
+
+  /** ID of the Provider that served this request (`X-SpaceRouter-Node`). */
+  get nodeId(): string | undefined {
+    // Same precedence as requestId: CONNECT capture wins for HTTPS;
+    // HTTP target requests fall back to the inner response header
+    // (gateway injects ``X-SpaceRouter-Node`` for one-shot HTTP).
+    return (
+      this._metadata.nodeId
+      ?? this._response.headers.get("x-spacerouter-node")
+      ?? undefined
+    );
+  }
+
+  /** Gateway's routing tag — `"home"` for normal nodes, `"fallback"` otherwise. */
+  get routingTag(): string | undefined {
+    return (
+      this._metadata.routingTag
+      ?? this._response.headers.get("x-spacerouter-routing")
+      ?? undefined
+    );
   }
 
   /** HTTP status code. */
